@@ -6,6 +6,7 @@ const mongoose = require('mongoose');
 const studentRoutes = require('./routes/studentRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const feeRoutes = require('./routes/feeRoutes');
+const { startPolling } = require('./services/transactionService');
 
 const app = express();
 
@@ -13,7 +14,10 @@ app.use(cors());
 app.use(express.json());
 
 mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/stellaredupay')
-  .then(() => console.log('MongoDB connected'))
+  .then(() => {
+    console.log('MongoDB connected');
+    startPolling();
+  })
   .catch(err => console.error('MongoDB error:', err));
 
 app.use('/api/students', studentRoutes);
