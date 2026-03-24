@@ -7,7 +7,9 @@ const mongoose = require('mongoose');
 const studentRoutes = require('./routes/studentRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const feeRoutes = require('./routes/feeRoutes');
+const reportRoutes = require('./routes/reportRoutes');
 const { startPolling } = require('./services/transactionService');
+const { startRetryWorker } = require('./services/retryService');
 
 const app = express();
 
@@ -18,12 +20,14 @@ mongoose.connect(config.MONGO_URI)
   .then(() => {
     console.log('MongoDB connected');
     startPolling();
+    startRetryWorker();
   })
   .catch(err => console.error('MongoDB error:', err));
 
 app.use('/api/students', studentRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/fees', feeRoutes);
+app.use('/api/reports', reportRoutes);
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
