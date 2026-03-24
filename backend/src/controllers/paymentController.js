@@ -1,6 +1,9 @@
 const Payment = require('../models/paymentModel');
+const PaymentIntent = require('../models/paymentIntentModel');
+const Student = require('../models/studentModel');
 const { syncPayments, verifyTransaction } = require('../services/stellarService');
 const { SCHOOL_WALLET, ACCEPTED_ASSETS } = require('../config/stellarConfig');
+const crypto = require('crypto');
 
 // GET /api/payments/instructions/:studentId
 async function getPaymentInstructions(req, res) {
@@ -14,8 +17,31 @@ async function getPaymentInstructions(req, res) {
         type: a.type,
         displayName: a.displayName,
       })),
-      note: 'Include the student ID exactly as the memo when sending payment. Only the listed assets are accepted.',
+      note: 'Include the payment intent memo exactly when sending payment to ensure your fees are credited.',
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// POST /api/payments/intent
+async function createPaymentIntent(req, res) {
+  try {
+    const { studentId } = req.body;
+    const student = await Student.findOne({ studentId });
+    if (!student) return res.status(404).json({ error: 'Student not found' });
+
+    // Generate a unique memo for this payment
+    const memo = crypto.randomBytes(4).toString('hex').toUpperCase();
+
+    const intent = await PaymentIntent.create({
+      studentId,
+      amount: student.feeAmount,
+      memo,
+      expiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000), // 2 hours
+    });
+
+    res.status(201).json(intent);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -72,4 +98,11 @@ async function getAcceptedAssets(req, res) {
   }
 }
 
-module.exports = { getPaymentInstructions, verifyPayment, syncAllPayments, getStudentPayments, getAcceptedAssets };
+module.exports = {
+  getPaymentInstructions,
+  verifyPayment,
+  syncAllPayments,
+  getStudentPayments,
+  getAcceptedAssets,
+  createPaymentIntent,
+};

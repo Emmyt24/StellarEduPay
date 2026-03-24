@@ -1,6 +1,7 @@
 const { server, SCHOOL_WALLET, isAcceptedAsset } = require('../config/stellarConfig');
 const Payment = require('../models/paymentModel');
 const Student = require('../models/studentModel');
+const PaymentIntent = require('../models/paymentIntentModel');
 
 /**
  * Detect asset information from a Stellar payment operation.
@@ -51,27 +52,34 @@ async function syncPayments() {
     const asset = detectAsset(payOp);
     if (!asset) continue; // skip unsupported assets
 
-    const student = await Student.findOne({ studentId: memo });
+    // Find the corresponding payment intent by memo
+    const intent = await PaymentIntent.findOne({ memo, status: 'pending' });
+    if (!intent) continue;
+
+    const student = await Student.findOne({ studentId: intent.studentId });
     if (!student) continue;
 
     const paymentAmount = parseFloat(payOp.amount);
 
-    // Validate payment amount against the student's defined fee
-    const feeValidation = validatePaymentAgainstFee(paymentAmount, student.feeAmount);
+    // Validate payment amount against the intent expected amount
+    const feeValidation = validatePaymentAgainstFee(paymentAmount, intent.amount);
 
     await Payment.create({
-      studentId: memo,
+      studentId: intent.studentId,
       txHash: tx.hash,
       amount: paymentAmount,
-      feeAmount: student.feeAmount,
+      feeAmount: intent.amount,
       feeValidationStatus: feeValidation.status,
       memo,
       confirmedAt: new Date(tx.created_at),
     });
 
+    // Mark intent as completed
+    await PaymentIntent.findByIdAndUpdate(intent._id, { status: 'completed' });
+
     // Only mark as paid if the payment meets or exceeds the required fee
     if (feeValidation.status === 'valid' || feeValidation.status === 'overpaid') {
-      await Student.findOneAndUpdate({ studentId: memo }, { feePaid: true });
+      await Student.findOneAndUpdate({ studentId: intent.studentId }, { feePaid: true });
     }
   }
 }
@@ -85,18 +93,20 @@ async function verifyTransaction(txHash) {
 
   const amount = parseFloat(payOp.amount);
 
-  // Look up the student to validate against their fee
-  const student = await Student.findOne({ studentId: tx.memo });
-  const feeAmount = student ? student.feeAmount : null;
-  const feeValidation = feeAmount != null
-    ? validatePaymentAgainstFee(amount, feeAmount)
-    : { status: 'unknown', message: 'Student not found, cannot validate fee' };
+  // Find corresponding intent
+  const intent = await PaymentIntent.findOne({ memo: tx.memo });
+  if (!intent) return { hash: tx.hash, error: 'no_matching_intent', message: 'No pending payment intent found for this memo' };
+
+  const student = await Student.findOne({ studentId: intent.studentId });
+  const feeValidation = validatePaymentAgainstFee(amount, intent.amount);
 
   return {
     hash: tx.hash,
     memo: tx.memo,
+    intentId: intent._id,
+    studentId: intent.studentId,
     amount,
-    feeAmount,
+    expectedAmount: intent.amount,
     feeValidation,
     date: tx.created_at,
   };

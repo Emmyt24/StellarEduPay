@@ -14,6 +14,12 @@ jest.mock('../backend/src/models/paymentModel', () => ({
   create: jest.fn().mockResolvedValue({}),
 }));
 
+jest.mock('../backend/src/models/paymentIntentModel', () => ({
+  create: jest.fn().mockResolvedValue({ studentId: 'STU001', amount: 200, memo: 'ABCD123', status: 'pending' }),
+  findOne: jest.fn().mockResolvedValue({ studentId: 'STU001', amount: 200, memo: 'ABCD123', status: 'pending' }),
+  findByIdAndUpdate: jest.fn().mockResolvedValue({}),
+}));
+
 jest.mock('../backend/src/models/feeStructureModel', () => {
   const mockFees = [
     { className: '5A', feeAmount: 200, description: 'Class 5A fees', academicYear: '2026', isActive: true },
@@ -43,7 +49,7 @@ jest.mock('mongoose', () => ({
 jest.mock('../backend/src/services/stellarService', () => ({
   syncPayments: jest.fn().mockResolvedValue(),
   verifyTransaction: jest.fn().mockResolvedValue({
-    hash: 'abc123', memo: 'STU001', amount: 200, feeAmount: 200,
+    hash: 'abc123', memo: 'ABCD123', amount: 200, expectedAmount: 200,
     feeValidation: { status: 'valid', message: 'Payment matches the required fee' },
     date: new Date().toISOString(),
   }),
@@ -64,7 +70,7 @@ describe('Payment API', () => {
     const res = await request(app).post('/api/payments/verify').send({ txHash: 'abc123' });
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty('hash', 'abc123');
-    expect(res.body).toHaveProperty('feeAmount', 200);
+    expect(res.body).toHaveProperty('expectedAmount', 200);
     expect(res.body.feeValidation).toHaveProperty('status', 'valid');
   });
 
@@ -123,5 +129,22 @@ describe('Fee Structure API', () => {
     expect(res.body).toHaveProperty('assets');
     expect(res.body.assets.some(a => a.code === 'XLM')).toBe(true);
     expect(res.body.assets.some(a => a.code === 'USDC')).toBe(true);
+  });
+});
+
+describe('Payment Intent API', () => {
+  test('POST /api/payments/intent creates a payment intent', async () => {
+    const res = await request(app).post('/api/payments/intent').send({ studentId: 'STU001' });
+    expect(res.status).toBe(201);
+    expect(res.body).toHaveProperty('memo');
+    expect(res.body).toHaveProperty('amount', 200);
+    expect(res.body).toHaveProperty('studentId', 'STU001');
+  });
+
+  test('POST /api/payments/intent returns 404 for unknown student', async () => {
+    const studentModel = require('../backend/src/models/studentModel');
+    studentModel.findOne.mockResolvedValueOnce(null);
+    const res = await request(app).post('/api/payments/intent').send({ studentId: 'UNKNOWN' });
+    expect(res.status).toBe(404);
   });
 });
