@@ -1,4 +1,5 @@
 const Payment = require('../models/paymentModel');
+const { syncPayments, verifyTransaction, finalizeConfirmedPayments } = require('../services/stellarService');
 const PaymentIntent = require('../models/paymentIntentModel');
 const Student = require('../models/studentModel');
 const { syncPayments, verifyTransaction } = require('../services/stellarService');
@@ -190,6 +191,27 @@ async function getSuspiciousPayments(req, res) {
   }
 }
 
+// GET /api/payments/pending
+async function getPendingPayments(req, res) {
+  try {
+    const pending = await Payment.find({ confirmationStatus: 'pending_confirmation' }).sort({ confirmedAt: -1 });
+    res.json({ count: pending.length, pending });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// POST /api/payments/finalize
+async function finalizePayments(req, res) {
+  try {
+    await finalizeConfirmedPayments();
+    res.json({ message: 'Finalization complete' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+module.exports = { getPaymentInstructions, verifyPayment, syncAllPayments, getStudentPayments, getAcceptedAssets, getOverpayments, getStudentBalance, getSuspiciousPayments, getPendingPayments, finalizePayments };
 module.exports = { getPaymentInstructions, verifyPayment, syncAllPayments, getStudentPayments, getAcceptedAssets, getOverpayments, getStudentBalance, getSuspiciousPayments };
 module.exports = { getPaymentInstructions, verifyPayment, syncAllPayments, getStudentPayments, getAcceptedAssets, getOverpayments, getStudentBalance };
 module.exports = { getPaymentInstructions, verifyPayment, syncAllPayments, getStudentPayments, getAcceptedAssets, getOverpayments };
