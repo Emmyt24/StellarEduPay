@@ -1,3 +1,9 @@
+'use strict';
+
+const Payment = require('../models/paymentModel');
+const PaymentIntent = require('../models/paymentIntentModel');
+const Student = require('../models/studentModel');
+const { syncPayments, verifyTransaction, finalizeConfirmedPayments } = require('../services/stellarService');
 const crypto = require('crypto');
 const Payment = require('../models/paymentModel');
 const PaymentIntent = require('../models/paymentIntentModel');
@@ -167,6 +173,12 @@ async function verifyPayment(req, res, next) {
       return res.status(404).json({ error: 'Transaction not found or invalid' });
     }
 
+    if (!result) {
+      const err = new Error('Transaction not found or invalid');
+      err.code = 'NOT_FOUND';
+      err.status = 404;
+      return next(err);
+    }
     const now = new Date();
 
     await recordPayment({

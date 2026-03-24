@@ -1,3 +1,5 @@
+'use strict';
+
 const express = require('express');
 const router = express.Router();
 const {
@@ -8,10 +10,12 @@ const {
   finalizePayments,
   getStudentPayments,
   getAcceptedAssets,
+  createPaymentIntent,
   getOverpayments,
   getStudentBalance,
   getSuspiciousPayments,
   getPendingPayments,
+  finalizePayments,
 } = require('../controllers/paymentController');
 const { validateStudentIdParam, validateVerifyPayment } = require('../middleware/validate');
 
