@@ -6,6 +6,7 @@ const mongoose = require('mongoose');
 const studentRoutes = require('./routes/studentRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const feeRoutes = require('./routes/feeRoutes');
+const reportRoutes = require('./routes/reportRoutes');
 const { startPolling } = require('./services/transactionService');
 
 const app = express();
@@ -23,6 +24,7 @@ mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/stellaredup
 app.use('/api/students', studentRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/fees', feeRoutes);
+app.use('/api/reports', reportRoutes);
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 

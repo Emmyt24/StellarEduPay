@@ -11,3 +11,11 @@ export const getFeeStructures = () => api.get('/fees');
 export const createFeeStructure = (data) => api.post('/fees', data);
 export const getFeeByClass = (className) => api.get(`/fees/${className}`);
 
+// Reports
+export const getReport = (params = {}) => api.get('/reports', { params });
+export const getReportCsvUrl = (params = {}) => {
+  const base = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+  const query = new URLSearchParams({ ...params, format: 'csv' }).toString();
+  return `${base}/reports?${query}`;
+};
+
