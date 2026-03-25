@@ -10,7 +10,7 @@ const { get, set, del, KEYS, TTL } = require('../cache');
 async function registerStudent(req, res, next) {
   try {
     const { schoolId } = req;
-    let { studentId, name, class: className, feeAmount } = req.body;
+    let { studentId, name, class: className, feeAmount, parentEmail, parentPhone } = req.body;
 
     if (!studentId) {
       const { generateStudentId } = require('../utils/generateStudentId');
@@ -48,7 +48,7 @@ async function registerStudent(req, res, next) {
       return next(err);
     }
 
-    const student = await Student.create({ schoolId, studentId, name, class: className, feeAmount: assignedFee });
+    const student = await Student.create({ schoolId, studentId, name, class: className, feeAmount: assignedFee, parentEmail: parentEmail || null, parentPhone: parentPhone || null });
 
     // Invalidate student list cache since a new student was added
     del(KEYS.studentsAll());
@@ -239,6 +239,8 @@ async function bulkImportStudents(req, res, next) {
           name: row.name.trim(),
           class: row.class.trim(),
           feeAmount: assignedFee,
+          parentEmail: row.parentEmail ? row.parentEmail.trim().toLowerCase() : null,
+          parentPhone: row.parentPhone ? row.parentPhone.trim() : null,
         });
         results.created++;
         results.details.push({ index: i, studentId: student.studentId, status: 'created', _id: student._id });

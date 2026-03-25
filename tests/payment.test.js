@@ -76,6 +76,12 @@ jest.mock('../backend/src/services/consistencyScheduler', () => ({
   startConsistencyScheduler: jest.fn(),
 }));
 
+jest.mock('../backend/src/services/reminderService', () => ({
+  startReminderScheduler: jest.fn(),
+  stopReminderScheduler: jest.fn(),
+  processReminders: jest.fn().mockResolvedValue({ schools: 0, eligible: 0, sent: 0, failed: 0, skipped: 0 }),
+}));
+
 jest.mock('../backend/src/models/schoolModel', () => ({
   findOne: jest.fn().mockReturnValue({
     lean: jest.fn().mockResolvedValue({
