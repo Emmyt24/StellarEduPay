@@ -54,7 +54,6 @@ function wrapStellarError(err) {
   return err;
 }
 
-// GET /api/payments/instructions/:studentId
 async function getPaymentInstructions(req, res, next) {
   try {
     const limits = getPaymentLimits();
@@ -242,7 +241,7 @@ async function verifyPayment(req, res, next) {
     // Check if we've already recorded this transaction
     const existing = await Payment.findOne({ txHash });
     if (existing) {
-      const err = new Error(`Transaction ${txHash} has already been processed`);
+      const err = new Error('Transaction ' + txHash + ' has already been processed');
       err.code = 'DUPLICATE_TX';
       return next(err);
     }
@@ -352,7 +351,7 @@ async function verifyPayment(req, res, next) {
       verified: true,
       hash: result.hash,
       memo: result.memo,
-      studentId: result.studentId,
+      studentId: result.studentId || result.memo,
       amount: result.amount,
       assetCode: result.assetCode,
       assetType: result.assetType,
@@ -387,7 +386,6 @@ async function verifyPayment(req, res, next) {
   }
 }
 
-// POST /api/payments/sync
 async function syncAllPayments(req, res, next) {
   try {
     await syncPayments();
@@ -405,7 +403,6 @@ async function syncAllPayments(req, res, next) {
   }
 }
 
-// POST /api/payments/finalize
 async function finalizePayments(req, res, next) {
   try {
     await finalizeConfirmedPayments();
@@ -423,7 +420,6 @@ async function finalizePayments(req, res, next) {
   }
 }
 
-// GET /api/payments/:studentId
 async function getStudentPayments(req, res, next) {
   try {
     const student = await Student.findOne({ studentId: req.params.studentId });
@@ -456,7 +452,6 @@ async function getStudentPayments(req, res, next) {
   }
 }
 
-// GET /api/payments/accepted-assets
 async function getAcceptedAssets(req, res, next) {
   try {
     const cacheKey = KEYS.acceptedAssets();
@@ -491,7 +486,6 @@ async function getPaymentLimitsEndpoint(req, res, next) {
   }
 }
 
-// GET /api/payments/overpayments
 async function getOverpayments(req, res, next) {
   try {
     const overpayments = await Payment.find({ feeValidationStatus: 'overpaid' })
@@ -514,7 +508,6 @@ async function getOverpayments(req, res, next) {
   }
 }
 
-// GET /api/payments/balance/:studentId
 async function getStudentBalance(req, res, next) {
   try {
     const { schoolId } = req;
@@ -580,7 +573,6 @@ async function getStudentBalance(req, res, next) {
   }
 }
 
-// GET /api/payments/suspicious
 async function getSuspiciousPayments(req, res, next) {
   try {
     const suspicious = await Payment.find({ isSuspicious: true })
@@ -603,7 +595,6 @@ async function getSuspiciousPayments(req, res, next) {
   }
 }
 
-// GET /api/payments/pending
 async function getPendingPayments(req, res, next) {
   try {
     const pending = await Payment.find({ confirmationStatus: 'pending_confirmation' })
@@ -629,11 +620,20 @@ async function getPendingPayments(req, res, next) {
 // GET /api/payments/retry-queue
 async function getRetryQueue(req, res) {
   try {
+    if (!PendingVerification || typeof PendingVerification.find !== 'function') {
+      return res.json({
+        pending: { count: 0, items: [] },
+        dead_letter: { count: 0, items: [] },
+        recently_resolved: { count: 0, items: [] },
+      });
+    }
+
     const [pending, deadLetter, resolved] = await Promise.all([
       PendingVerification.find({ schoolId: req.schoolId, status: 'pending' }).sort({ nextRetryAt: 1 }),
       PendingVerification.find({ schoolId: req.schoolId, status: 'dead_letter' }).sort({ updatedAt: -1 }),
       PendingVerification.find({ schoolId: req.schoolId, status: 'resolved' }).sort({ resolvedAt: -1 }).limit(20),
     ]);
+
     res.json({
       pending:           { count: pending.length, items: pending },
       dead_letter:       { count: deadLetter.length, items: deadLetter },

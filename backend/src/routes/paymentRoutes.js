@@ -29,7 +29,6 @@ const {
 const { validateStudentIdParam, validateVerifyPayment } = require('../middleware/validate');
 const { resolveSchool } = require('../middleware/schoolContext');
 
-// Static routes first (before :studentId wildcard)
 router.get('/accepted-assets', getAcceptedAssets);
 router.get('/limits', getPaymentLimitsEndpoint);
 router.get('/overpayments', getOverpayments);

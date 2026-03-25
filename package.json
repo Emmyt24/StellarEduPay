@@ -2,7 +2,8 @@
   "name": "stellaredupay",
   "version": "1.0.0",
   "scripts": {
-    "test": "jest --testPathPattern=tests/ --forceExit"
+    "test": "jest --testPathPattern=tests/ --forceExit",
+    "seed": "node scripts/seed-test-data.js"
   },
   "devDependencies": {
     "dotenv": "^17.3.1",
