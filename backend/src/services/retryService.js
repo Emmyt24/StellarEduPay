@@ -14,6 +14,7 @@ const School = require('../models/schoolModel');
 const { verifyTransaction, recordPayment } = require('./stellarService');
 const { server } = require('../config/stellarConfig');
 const config = require('../config/index');
+const logger = require('../utils/logger').child('RetryService');
 
 const RETRY_INTERVAL_MS = config.RETRY_INTERVAL_MS;
 const MAX_ATTEMPTS = config.RETRY_MAX_ATTEMPTS;
@@ -55,7 +56,7 @@ async function queueForRetry(txHash, studentId = null, errorMessage = '', school
     },
     { upsert: true, new: true }
   );
-  console.log(`[RetryService] Queued ${txHash} (school: ${schoolId}) — reason: ${errorMessage}`);
+  logger.info('Queued transaction for retry', { txHash, schoolId, reason: errorMessage });
 }
 
 let _running = false;
@@ -75,12 +76,12 @@ async function processPendingVerifications() {
 
     const reachable = await isStellarReachable();
     if (!reachable) {
-      console.warn('[RetryService] Stellar network still unreachable — skipping batch');
+      logger.warn('Stellar network still unreachable — skipping batch');
       _running = false;
       return;
     }
 
-    console.log(`[RetryService] Processing ${due.length} pending verification(s)`);
+    logger.info(`Processing ${due.length} pending verification(s)`);
 
     for (const item of due) {
       await PendingVerification.findByIdAndUpdate(item._id, {
@@ -107,7 +108,7 @@ async function processPendingVerifications() {
             status: 'dead_letter',
             lastError: 'verifyTransaction returned null — transaction is permanently invalid',
           });
-          console.warn(`[RetryService] Dead-lettered ${item.txHash} — permanently invalid`);
+          logger.warn('Dead-lettered transaction — permanently invalid', { txHash: item.txHash });
           continue;
         }
 
@@ -131,7 +132,7 @@ async function processPendingVerifications() {
           lastError: null,
         });
 
-        console.log(`[RetryService] Resolved ${item.txHash} after ${item.attempts + 1} attempt(s)`);
+        logger.info('Transaction resolved', { txHash: item.txHash, attempts: item.attempts + 1 });
       } catch (err) {
         const attempts = item.attempts + 1;
         const isPermanentError = ['TX_FAILED', 'MISSING_MEMO', 'INVALID_DESTINATION', 'UNSUPPORTED_ASSET', 'DUPLICATE_TX'].includes(err.code);
@@ -142,26 +143,26 @@ async function processPendingVerifications() {
             status: 'dead_letter',
             lastError: err.message,
           });
-          console.error(`[RetryService] Dead-lettered ${item.txHash} — ${isPermanentError ? 'permanent error' : 'max attempts reached'}: ${err.message}`);
+          logger.error('Dead-lettered transaction', { txHash: item.txHash, reason: isPermanentError ? 'permanent error' : 'max attempts reached', error: err.message, code: err.code });
         } else if (isStellarError) {
           await PendingVerification.findByIdAndUpdate(item._id, {
             status: 'pending',
             lastError: err.message,
             nextRetryAt: nextRetryDelay(attempts),
           });
-          console.warn(`[RetryService] Rescheduled ${item.txHash} (attempt ${attempts})`);
+          logger.warn('Rescheduled transaction after Stellar error', { txHash: item.txHash, attempt: attempts, error: err.message });
         } else {
           await PendingVerification.findByIdAndUpdate(item._id, {
             status: 'pending',
             lastError: err.message,
             nextRetryAt: nextRetryDelay(attempts),
           });
-          console.error(`[RetryService] Unknown error for ${item.txHash}: ${err.message}`);
+          logger.error('Unknown error processing transaction', { txHash: item.txHash, error: err.message, code: err.code });
         }
       }
     }
   } catch (err) {
-    console.error('[RetryService] Unexpected error in processPendingVerifications:', err.message);
+    logger.error('Unexpected error in processPendingVerifications', { error: err.message, stack: err.stack });
   } finally {
     _running = false;
   }
@@ -169,7 +170,7 @@ async function processPendingVerifications() {
 
 function startRetryWorker() {
   if (_timer) return;
-  console.log(`[RetryService] Starting — interval: ${RETRY_INTERVAL_MS}ms, max attempts: ${MAX_ATTEMPTS}`);
+  logger.info(`Starting — interval: ${RETRY_INTERVAL_MS}ms, max attempts: ${MAX_ATTEMPTS}`);
   processPendingVerifications();
   _timer = setInterval(processPendingVerifications, RETRY_INTERVAL_MS);
 }
@@ -178,7 +179,7 @@ function stopRetryWorker() {
   if (_timer) {
     clearInterval(_timer);
     _timer = null;
-    console.log('[RetryService] Stopped');
+    logger.info('Stopped');
   }
 }
 

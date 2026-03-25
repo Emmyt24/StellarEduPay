@@ -25,8 +25,6 @@ const MONGO_URI       = process.env.MONGO_URI;
 const STELLAR_NETWORK = process.env.STELLAR_NETWORK || 'testnet';
 const IS_TESTNET      = STELLAR_NETWORK !== 'mainnet';
 
-const STELLAR_NETWORK_PASSPHRASE = process.env.STELLAR_NETWORK_PASSPHRASE;
-
 const HORIZON_URL =
   process.env.HORIZON_URL ||
   (IS_TESTNET ? 'https://horizon-testnet.stellar.org' : 'https://horizon.stellar.org');
@@ -44,30 +42,28 @@ const CONFIRMATION_THRESHOLD = parseInt(process.env.CONFIRMATION_THRESHOLD || '2
 const POLL_INTERVAL_MS       = parseInt(process.env.POLL_INTERVAL_MS || '30000', 10);
 
 // ── Retry Service ─────────────────────────────────────────────────────────────
-const RETRY_INTERVAL_MS = parseInt(process.env.RETRY_INTERVAL_MS || '60000', 10);
+const RETRY_INTERVAL_MS  = parseInt(process.env.RETRY_INTERVAL_MS || '60000', 10);
 const RETRY_MAX_ATTEMPTS = parseInt(process.env.RETRY_MAX_ATTEMPTS || '10', 10);
-// ── Payment Limits ────────────────────────────────────────────────────────────
-// Minimum payment amount (default: 0.01 XLM/USDC)
-const MIN_PAYMENT_AMOUNT = parseFloat(process.env.MIN_PAYMENT_AMOUNT || '0.01');
 
-// Maximum payment amount (default: 100000 XLM/USDC)
+// ── Payment Limits ────────────────────────────────────────────────────────────
+const MIN_PAYMENT_AMOUNT = parseFloat(process.env.MIN_PAYMENT_AMOUNT || '0.01');
 const MAX_PAYMENT_AMOUNT = parseFloat(process.env.MAX_PAYMENT_AMOUNT || '100000');
 
-// Validate payment limits
 if (MIN_PAYMENT_AMOUNT < 0) {
   throw new Error('[Config] MIN_PAYMENT_AMOUNT must be a positive number');
 }
-
 if (MAX_PAYMENT_AMOUNT <= MIN_PAYMENT_AMOUNT) {
   throw new Error('[Config] MAX_PAYMENT_AMOUNT must be greater than MIN_PAYMENT_AMOUNT');
 }
-// ── Timeouts ──────────────────────────────────────────────────────────────────
-// Maximum time (ms) an incoming HTTP request may remain open before the server
-// responds with 503. Covers slow Stellar/DB calls on any route.
-const REQUEST_TIMEOUT_MS = parseInt(process.env.REQUEST_TIMEOUT_MS || '30000', 10);
 
-// Maximum time (ms) allowed for a single outbound Stellar Horizon API call.
+// ── Timeouts ──────────────────────────────────────────────────────────────────
+const REQUEST_TIMEOUT_MS = parseInt(process.env.REQUEST_TIMEOUT_MS || '30000', 10);
 const STELLAR_TIMEOUT_MS = parseInt(process.env.STELLAR_TIMEOUT_MS || '10000', 10);
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+// Secret used to sign/verify admin JWTs. Must be set in production.
+const JWT_SECRET          = process.env.JWT_SECRET || null;
+const JWT_EXPIRES_IN      = process.env.JWT_EXPIRES_IN || '8h';
 
 // ── Freeze to prevent accidental mutation at runtime ─────────────────────────
 const config = Object.freeze({
@@ -75,7 +71,6 @@ const config = Object.freeze({
   MONGO_URI,
   STELLAR_NETWORK,
   IS_TESTNET,
-  STELLAR_NETWORK_PASSPHRASE,
   HORIZON_URL,
   SCHOOL_WALLET_ADDRESS,
   USDC_ISSUER,
@@ -87,6 +82,8 @@ const config = Object.freeze({
   MAX_PAYMENT_AMOUNT,
   REQUEST_TIMEOUT_MS,
   STELLAR_TIMEOUT_MS,
+  JWT_SECRET,
+  JWT_EXPIRES_IN,
 });
 
 module.exports = config;

@@ -85,3 +85,4 @@ const logger = {
 };
 
 module.exports = logger;
+module.exports.logger = logger; // named export for destructured imports

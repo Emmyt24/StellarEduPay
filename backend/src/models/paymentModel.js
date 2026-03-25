@@ -6,17 +6,17 @@ const paymentSchema = new mongoose.Schema(
   {
     studentId:            { type: mongoose.Schema.Types.ObjectId, ref: 'Student', required: true },
     schoolId:             { type: String, required: true, index: true },
-    
-    // Student identifier (string version for memo matching)
-    studentIdStr:         { type: String, required: true, index: true },   // renamed to avoid conflict
+
+    // String version of studentId used in memo matching
+    studentIdStr:         { type: String, required: true, index: true },
 
     txHash:               { type: String, required: true, unique: true, index: true },
     amount:               { type: Number, required: true },
 
     // ── Fee Fields ────────────────────────────────────────────────────────
-    feeAmount:            { type: Number, default: null },        // Original base fee from intent/feeStructure
-    baseFee:              { type: Number, required: true },       // Base fee before any adjustments
-    finalFee:             { type: Number, required: true },       // ← Final fee after dynamic adjustments (This is what matters now)
+    feeAmount:            { type: Number, default: null },        // Original fee from intent/feeStructure
+    baseFee:              { type: Number, required: true },       // Base fee before adjustments
+    finalFee:             { type: Number, required: true },       // Final fee after dynamic adjustments (Issue #74)
 
     // Dynamic Fee Adjustment Engine (Wave 3 - Issue #74)
     adjustmentsApplied: [{
@@ -47,12 +47,12 @@ const paymentSchema = new mongoose.Schema(
     confirmedAt:          { type: Date, default: null, index: true },
     verifiedAt:           { type: Date, default: null },
 
-    // ── Payment locking (#91) ─────────────────────────────────────────────
+    // ── Payment locking ───────────────────────────────────────────────────
     lockedUntil:          { type: Date, default: null },
     lockHolder:           { type: String, default: null },
   },
   {
-    timestamps: true,           // auto-manages createdAt + updatedAt
+    timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true }
   }
@@ -67,7 +67,7 @@ paymentSchema.index({ schoolId: 1, confirmationStatus: 1 });
 paymentSchema.index({ studentIdStr: 1, createdAt: -1 });
 paymentSchema.index({ txHash: 1 });
 
-// Virtual for Stellar explorer URL
+// Virtual for Stellar explorer
 paymentSchema.virtual('explorerUrl').get(function() {
   if (!this.transactionHash) return null;
   return `https://stellar.expert/explorer/testnet/tx/${this.transactionHash}`;

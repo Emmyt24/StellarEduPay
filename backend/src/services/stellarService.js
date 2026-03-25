@@ -5,7 +5,7 @@ const Payment = require('../models/paymentModel');
 const Student = require('../models/studentModel');
 const PaymentIntent = require('../models/paymentIntentModel');
 const FeeStructure = require('../models/feeStructureModel');
-const FeeAdjustmentService = require('./feeAdjustmentService');   // ← Dynamic Fee Engine
+const FeeAdjustmentService = require('./feeAdjustmentService');
 
 const { validatePaymentAmount } = require('../utils/paymentLimits');
 const { generateReferenceCode } = require('../utils/generateReferenceCode');
@@ -42,10 +42,9 @@ async function extractValidPayment(tx, walletAddress) {
 }
 
 /**
- * Get base fee + apply dynamic adjustments (Issue #74)
+ * Calculate baseFee + apply dynamic adjustments (Issue #74)
  */
 async function getAdjustedFee(student, intentAmount, paymentDate, schoolId) {
-  // Prefer feeStructure for accuracy
   const feeStructure = await FeeStructure.findOne({
     schoolId,
     className: student.class || student.className,
@@ -116,10 +115,10 @@ async function detectMemoCollision(studentObjId, senderAddress, paymentAmount, f
   });
 
   if (recent) {
-    return { suspicious: true, reason: `Memo used by different sender within 24h` };
+    return { suspicious: true, reason: 'Memo used by different sender within 24h' };
   }
   if (paymentAmount <= 0 || paymentAmount > finalFee * 2) {
-    return { suspicious: true, reason: `Unusual amount vs finalFee` };
+    return { suspicious: true, reason: 'Unusual amount vs finalFee' };
   }
   return { suspicious: false, reason: null };
 }
@@ -139,14 +138,14 @@ async function detectAbnormalPatterns(senderAddress, paymentAmount, finalFee, tx
       confirmedAt: { $gte: windowStart }
     });
     if (count >= RAPID_TX_LIMIT) {
-      reasons.push(`Rapid transactions from sender`);
+      reasons.push('Rapid transactions from sender');
     }
   }
 
   if (finalFee > 0) {
     const ratio = paymentAmount / finalFee;
     if (ratio > UNUSUAL_MULTIPLIER || ratio < 1 / UNUSUAL_MULTIPLIER) {
-      reasons.push(`Unusual amount ratio`);
+      reasons.push('Unusual amount ratio');
     }
   }
 
@@ -158,7 +157,7 @@ async function detectAbnormalPatterns(senderAddress, paymentAmount, finalFee, tx
 /* ====================== MAIN FUNCTIONS ====================== */
 
 /**
- * Verify single transaction (used by manual verification endpoint)
+ * Verify single transaction (manual verification endpoint)
  */
 async function verifyTransaction(txHash, walletAddress) {
   const tx = await server.transactions().transaction(txHash).call();
@@ -183,7 +182,7 @@ async function verifyTransaction(txHash, walletAddress) {
   if (!student) return { status: 'unknown_student', memo, amount };
 
   const txDate = new Date(tx.created_at);
-  const { baseFee, finalFee, adjustmentsApplied } = await getAdjustedFee(student, student.feeAmount, txDate, student.schoolId);
+  const { baseFee, finalFee, adjustmentsApplied } = await getAdjustedFee(student, student.feeAmount, txDate, student.schoolId || null);
 
   const feeValidation = validatePaymentAgainstFee(amount, finalFee);
 
@@ -203,7 +202,7 @@ async function verifyTransaction(txHash, walletAddress) {
 }
 
 /**
- * Main sync function for a school (called by background job)
+ * Main background sync for a school
  */
 async function syncPaymentsForSchool(school) {
   const { schoolId, stellarAddress } = school;
@@ -232,7 +231,7 @@ async function syncPaymentsForSchool(school) {
     const txDate = new Date(tx.created_at);
     const txLedger = tx.ledger_attr || tx.ledger || null;
 
-    // === Dynamic Fee Adjustment (Core of Issue #74) ===
+    // Dynamic Fee Adjustment Engine
     const { baseFee, finalFee, adjustmentsApplied } = await getAdjustedFee(student, intent.amount, txDate, schoolId);
 
     const limitValidation = validatePaymentAmount(paymentAmount);
@@ -249,7 +248,7 @@ async function syncPaymentsForSchool(school) {
     const isSuspicious = collision.suspicious || abnormal.suspicious;
     const suspicionReason = [collision.reason, abnormal.reason].filter(Boolean).join('; ') || null;
 
-    // Cumulative using FINAL FEE
+    // Cumulative calculation using finalFee
     const agg = await Payment.aggregate([
       { $match: { schoolId, studentId: student._id, status: 'SUCCESS' } },
       { $group: { _id: null, total: { $sum: '$amount' } } }
@@ -265,14 +264,13 @@ async function syncPaymentsForSchool(school) {
 
     const feeValidation = validatePaymentAgainstFee(paymentAmount, finalFee);
 
-    // Create payment with full dynamic fee data
     await Payment.create({
       schoolId,
       studentId: student._id,
       studentIdStr: intent.studentId,
       txHash: tx.hash,
       amount: paymentAmount,
-      feeAmount: intent.amount,           // original requested
+      feeAmount: intent.amount,
       baseFee,
       finalFee,
       adjustmentsApplied,
@@ -313,7 +311,7 @@ async function syncPaymentsForSchool(school) {
 }
 
 /**
- * Finalize pending confirmations
+ * Re-check pending confirmations
  */
 async function finalizeConfirmedPayments(schoolId) {
   const pending = await Payment.find({
@@ -324,6 +322,7 @@ async function finalizeConfirmedPayments(schoolId) {
 
   for (const payment of pending) {
     if (!payment.ledger) continue;
+
     const isConfirmed = await checkConfirmationStatus(payment.ledger);
     if (!isConfirmed) continue;
 

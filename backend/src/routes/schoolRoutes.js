@@ -9,11 +9,15 @@ const {
   updateSchool,
   deactivateSchool,
 } = require('../controllers/schoolController');
+const { requireAdminAuth } = require('../middleware/auth');
 
-router.post('/',                createSchool);
+// Public read endpoints
 router.get('/',                 getAllSchools);
 router.get('/:schoolSlug',      getSchool);
-router.patch('/:schoolSlug',    updateSchool);
-router.delete('/:schoolSlug',   deactivateSchool);
+
+// Admin-only write endpoints — require JWT auth
+router.post('/',                requireAdminAuth, createSchool);
+router.patch('/:schoolSlug',    requireAdminAuth, updateSchool);
+router.delete('/:schoolSlug',   requireAdminAuth, deactivateSchool);
 
 module.exports = router;
