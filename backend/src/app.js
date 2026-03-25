@@ -8,8 +8,8 @@ const studentRoutes = require('./routes/studentRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const feeRoutes = require('./routes/feeRoutes');
 const reportRoutes = require('./routes/reportRoutes');
-const { startPolling } = require('./services/transactionService');
-const { startRetryWorker } = require('./services/retryService');
+const { startPolling, stopPolling } = require('./services/transactionService');
+const { startRetryWorker, stopRetryWorker, isRetryWorkerRunning } = require('./services/retryService');
 
 const app = express();
 
@@ -61,6 +61,42 @@ app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
 });
 
 const PORT = config.PORT;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+const server = app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+// ── Graceful shutdown ──────────────────────────────────────────────────────────
+async function shutdown(signal) {
+  console.log(`[Shutdown] Received ${signal} — starting graceful shutdown`);
+
+  // Stop background workers so no new jobs are scheduled
+  stopPolling();
+  stopRetryWorker();
+
+  // Wait for any in-progress retry batch to finish (max 8 s)
+  const deadline = Date.now() + 8_000;
+  while (isRetryWorkerRunning() && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  // Stop accepting new HTTP connections; wait for active requests to complete
+  server.close(async () => {
+    try {
+      await mongoose.connection.close();
+      console.log('[Shutdown] MongoDB disconnected — clean exit');
+      process.exit(0);
+    } catch (err) {
+      console.error('[Shutdown] Error closing MongoDB:', err.message);
+      process.exit(1);
+    }
+  });
+
+  // Force exit if graceful shutdown stalls beyond 10 s
+  setTimeout(() => {
+    console.error('[Shutdown] Forced exit after timeout');
+    process.exit(1);
+  }, 10_000).unref();
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT',  () => shutdown('SIGINT'));
 
 module.exports = app;
