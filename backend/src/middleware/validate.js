@@ -98,6 +98,8 @@ function validateRegisterStudent(req, res, next) {
 
   if (!validStudentId(studentId))                            errors.push('studentId must be 3–20 alphanumeric characters');
   if (!name || typeof name !== 'string' || !name.trim())    errors.push('name is required');
+  if (studentId != null && !validStudentId(studentId)) errors.push('studentId must be 3–20 alphanumeric characters');
+  if (!name || typeof name !== 'string' || !name.trim()) errors.push('name is required');
   if (!className || typeof className !== 'string' || !className.trim()) errors.push('class is required');
   if (req.body.feeAmount != null && !validPositiveNumber(req.body.feeAmount)) {
     errors.push('feeAmount must be a positive number');
