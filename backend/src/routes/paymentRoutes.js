@@ -22,6 +22,7 @@ const {
   retryDeadLetterJob,
   lockPaymentForUpdate,
   unlockPayment,
+  generateReceipt,
 } = require('../controllers/paymentController');
 
 const {
@@ -88,6 +89,7 @@ router.post('/dlq/:id/retry',                retryDeadLetterJob);
 // ── Parameterised GET routes ─────────────────────────────────────────────────
 router.get('/balance/:studentId',            validateStudentIdParam, getStudentBalance);
 router.get('/instructions/:studentId',       validateStudentIdParam, getPaymentInstructions);
+router.get('/receipt/:txHash',               generateReceipt);
 router.get('/:studentId',                    validateStudentIdParam, getStudentPayments);
 
 // ── POST routes ──────────────────────────────────────────────────────────────
