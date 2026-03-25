@@ -23,25 +23,6 @@ function normalizeAmount(rawAmount) {
 }
 
 /**
- * Extract valid payment operation from transaction
- */
-async function extractValidPayment(tx, walletAddress) {
-  if (!tx.successful) return null;
-
-  const memo = tx.memo ? tx.memo.trim() : null;
-  if (!memo) return null;
-
-  const ops = await tx.operations();
-  const payOp = ops.records.find(op => op.type === 'payment' && op.to === walletAddress);
-  if (!payOp) return null;
-
-  const asset = detectAsset(payOp);
-  if (!asset) return null;
-
-  return { payOp, memo, asset };
-}
-
-/**
  * Calculate baseFee + apply dynamic adjustments (Issue #74)
  */
 async function getAdjustedFee(student, intentAmount, paymentDate, schoolId) {
@@ -231,7 +212,7 @@ async function syncPaymentsForSchool(school) {
     const txDate = new Date(tx.created_at);
     const txLedger = tx.ledger_attr || tx.ledger || null;
 
-    // Dynamic Fee Adjustment Engine
+    // Dynamic Fee Adjustment Engine (#74)
     const { baseFee, finalFee, adjustmentsApplied } = await getAdjustedFee(student, intent.amount, txDate, schoolId);
 
     const limitValidation = validatePaymentAmount(paymentAmount);
@@ -344,6 +325,23 @@ async function finalizeConfirmedPayments(schoolId) {
       { totalPaid, remainingBalance, feePaid: totalPaid >= payment.finalFee }
     );
   }
+}
+
+// Missing extractValidPayment function (was referenced but not defined in previous version)
+async function extractValidPayment(tx, walletAddress) {
+  if (!tx.successful) return null;
+
+  const memo = tx.memo ? tx.memo.trim() : null;
+  if (!memo) return null;
+
+  const ops = await tx.operations();
+  const payOp = ops.records.find(op => op.type === 'payment' && op.to === walletAddress);
+  if (!payOp) return null;
+
+  const asset = detectAsset(payOp);
+  if (!asset) return null;
+
+  return { payOp, memo, asset };
 }
 
 module.exports = {
