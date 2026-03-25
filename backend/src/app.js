@@ -51,6 +51,9 @@ const concurrentMiddleware = createConcurrentRequestMiddleware({
   deduplicationTtlMs: 60000
 });
 
+// Apply rate limiting globally (throttle by IP: 100 req / 60 s)
+app.use(concurrentMiddleware.rateLimiter((req) => req.ip));
+
 // Apply request queue middleware globally
 app.use(concurrentMiddleware.requestQueue());
 
