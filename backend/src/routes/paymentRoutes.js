@@ -16,8 +16,10 @@ const {
   getSuspiciousPayments,
   getPendingPayments,
   getRetryQueue,
+  getExchangeRates,
 } = require('../controllers/paymentController');
 const { validateStudentIdParam, validateVerifyPayment } = require('../middleware/validate');
+const { resolveSchool } = require('../middleware/schoolContext');
 
 // Static routes first (before :studentId wildcard)
 router.get('/accepted-assets', getAcceptedAssets);
@@ -34,8 +36,25 @@ router.post('/intent', createPaymentIntent);
 router.post('/verify', validateVerifyPayment, verifyPayment);
 router.post('/sync', syncAllPayments);
 router.post('/finalize', finalizePayments);
+// All payment routes require school context
+router.use(resolveSchool);
 
-// Parameterized route last to avoid swallowing static paths
-router.get('/:studentId', validateStudentIdParam, getStudentPayments);
+// Static routes before parameterized ones
+router.get('/accepted-assets',                    getAcceptedAssets);
+router.get('/overpayments',                       getOverpayments);
+router.get('/suspicious',                         getSuspiciousPayments);
+router.get('/pending',                            getPendingPayments);
+router.get('/retry-queue',                        getRetryQueue);
+router.get('/rates',                              getExchangeRates);
+router.get('/balance/:studentId',                 validateStudentIdParam, getStudentBalance);
+router.get('/instructions/:studentId',            validateStudentIdParam, getPaymentInstructions);
+
+router.post('/intent',                            createPaymentIntent);
+router.post('/verify',                            validateVerifyPayment, verifyPayment);
+router.post('/sync',                              syncAllPayments);
+router.post('/finalize',                          finalizePayments);
+
+// Parameterized route last
+router.get('/:studentId',                         validateStudentIdParam, getStudentPayments);
 
 module.exports = router;
