@@ -25,6 +25,7 @@ const {
 const { queueForRetry } = require('../services/retryService');
 const { SCHOOL_WALLET, ACCEPTED_ASSETS, server } = require('../config/stellarConfig');
 const StellarSdk = require('@stellar/stellar-sdk');
+const { validateTransactionHash } = require('../utils/hashValidator');
 
 const { SCHOOL_WALLET, ACCEPTED_ASSETS } = require('../config/stellarConfig');
 const { getPaymentLimits } = require('../utils/paymentLimits');
@@ -137,6 +138,16 @@ async function submitTransaction(req, res, next) {
     // Decode the transaction from the base64 XDR string
     const tx = new StellarSdk.Transaction(xdr, require('../config/stellarConfig').networkPassphrase);
     const transactionHash = tx.hash().toString('hex');
+    
+    // Validate transaction hash format
+    const hashValidation = validateTransactionHash(transactionHash);
+    if (!hashValidation.valid) {
+      const err = new Error(hashValidation.error);
+      err.code = hashValidation.code;
+      return next(err);
+    }
+    
+    const normalizedHash = hashValidation.normalized;
     const memo = tx.memo.value ? tx.memo.value.toString() : null;
 
     if (!memo) {
@@ -158,7 +169,7 @@ async function submitTransaction(req, res, next) {
       });
     }
 
-    paymentRecord.transactionHash = transactionHash;
+    paymentRecord.transactionHash = normalizedHash;
     paymentRecord.status = 'SUBMITTED';
     paymentRecord.submittedAt = new Date();
     // Saving the record before sending to the network ensures a robust audit trail
@@ -188,7 +199,7 @@ async function submitTransaction(req, res, next) {
 
     res.json({
       verified: true,
-      hash: transactionHash,
+      hash: normalizedHash,
       ledger: txResponse.ledger,
       status: 'SUCCESS'
     });
@@ -217,24 +228,35 @@ async function verifyPayment(req, res, next) {
     const { schoolId } = req;
     const { txHash } = req.body;
 
+    // Validate transaction hash format
+    const hashValidation = validateTransactionHash(txHash);
+    if (!hashValidation.valid) {
+      const err = new Error(hashValidation.error);
+      err.code = hashValidation.code;
+      return next(err);
+    }
+
+    // Use normalized hash
+    const normalizedHash = hashValidation.normalized;
+
     // Check if we've already recorded this transaction
-    const existing = await Payment.findOne({ txHash });
+    const existing = await Payment.findOne({ txHash: normalizedHash });
     if (existing) {
-      const err = new Error('Transaction ' + txHash + ' has already been processed');
+      const err = new Error('Transaction ' + normalizedHash + ' has already been processed');
       err.code = 'DUPLICATE_TX';
       return next(err);
     }
 
     let result;
     try {
-      result = await verifyTransaction(txHash, req.school.stellarAddress);
+      result = await verifyTransaction(normalizedHash, req.school.stellarAddress);
     } catch (stellarErr) {
       // Record a failed payment entry for known failure codes so we have an audit trail
       if (PERMANENT_FAIL_CODES.includes(stellarErr.code)) {
         await Payment.create({
           schoolId,
           studentId: 'unknown',
-          txHash: txHash,
+          txHash: normalizedHash,
           amount: 0,
           status: 'FAILED',
           feeValidationStatus: 'unknown',
@@ -242,10 +264,10 @@ async function verifyPayment(req, res, next) {
         return next(stellarErr);
       }
 
-      await queueForRetry(txHash, req.body.studentId || null, stellarErr.message, schoolId);
+      await queueForRetry(normalizedHash, req.body.studentId || null, stellarErr.message, schoolId);
       return res.status(202).json({
         message: 'Stellar network is temporarily unavailable. Your transaction has been queued and will be verified automatically.',
-        txHash,
+        txHash: normalizedHash,
         status: 'queued_for_retry',
       });
     }
