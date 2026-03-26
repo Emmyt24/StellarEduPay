@@ -29,31 +29,14 @@ const {
   server,
 } = require("../config/stellarConfig");
 const StellarSdk = require("@stellar/stellar-sdk");
-
-const { SCHOOL_WALLET, ACCEPTED_ASSETS } = require("../config/stellarConfig");
-const { getPaymentLimits } = require("../utils/paymentLimits");
-const crypto = require("crypto");
-
-// Permanent error codes that should NOT be retried
-const PERMANENT_FAIL_CODES = [
-  "TX_FAILED",
-  "MISSING_MEMO",
-  "INVALID_DESTINATION",
-  "UNSUPPORTED_ASSET",
-  "AMOUNT_TOO_LOW",
-  "AMOUNT_TOO_HIGH",
-  "UNDERPAID",
-];
-const { ACCEPTED_ASSETS } = require("../config/stellarConfig");
 const { getPaymentLimits } = require("../utils/paymentLimits");
 const {
   convertToLocalCurrency,
   enrichPaymentWithConversion,
 } = require("../services/currencyConversionService");
-const { SCHOOL_WALLET, server } = require("../config/stellarConfig");
-const StellarSdk = require("@stellar/stellar-sdk");
 const { withStellarRetry } = require("../utils/withStellarRetry");
 
+// Permanent error codes that should NOT be retried
 const PERMANENT_FAIL_CODES = [
   "TX_FAILED",
   "MISSING_MEMO",
@@ -191,12 +174,10 @@ async function submitTransaction(req, res, next) {
     if (!paymentRecord) {
       const studentObj = await Student.findOne({ studentId: memo });
       if (!studentObj) {
-        return res
-          .status(404)
-          .json({
-            error:
-              "Associated student not found in the database. Cannot process transaction.",
-          });
+        return res.status(404).json({
+          error:
+            "Associated student not found in the database. Cannot process transaction.",
+        });
       }
       paymentRecord = new Payment({
         studentId: studentObj._id,
@@ -228,6 +209,20 @@ async function submitTransaction(req, res, next) {
       return res
         .status(400)
         .json({ error: "Transaction submission failed", code: errorReason });
+    }
+
+    // Verify the response indicates success on-chain
+    if (!txResponse.successful) {
+      paymentRecord.status = "FAILED";
+      paymentRecord.confirmationStatus = "failed";
+      paymentRecord.suspicionReason =
+        "Transaction was included in ledger but failed on-chain";
+      await paymentRecord.save();
+      return res.status(400).json({
+        error: "Transaction was included in the ledger but failed on-chain",
+        code: "TX_FAILED",
+        hash: transactionHash,
+      });
     }
 
     // Success
@@ -320,11 +315,9 @@ async function verifyPayment(req, res, next) {
     const studentStrId = result.studentId || result.memo;
     const studentObj = await Student.findOne({ studentId: studentStrId });
     if (!studentObj) {
-      return res
-        .status(404)
-        .json({
-          error: "Associated student not found. Cannot record transaction.",
-        });
+      return res.status(404).json({
+        error: "Associated student not found. Cannot record transaction.",
+      });
     }
 
     // Reject if the payment intent has expired
@@ -840,8 +833,8 @@ async function retryDeadLetterJob(req, res, next) {
           status: "pending",
           lastError: null,
           nextRetryAt: new Date(),
+          attempts: 0,
         },
-        $set: { attempts: 0 },
       },
       { new: true },
     );
