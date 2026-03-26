@@ -21,6 +21,7 @@ const {
 } = require('../services/stellarService');
 const { queueForRetry } = require('../services/retryService');
 const { ACCEPTED_ASSETS, server } = require('../config/stellarConfig');
+const StellarSdk = require('@stellar/stellar-sdk');
 const { SCHOOL_WALLET, ACCEPTED_ASSETS, server } = require('../config/stellarConfig');
 const StellarSdk = require('@stellar/stellar-sdk');
 const { validateTransactionHash } = require('../utils/hashValidator');
@@ -31,6 +32,7 @@ const crypto = require('crypto');
 
 const { queueForRetry } = require('../services/retryService');
 const { getPaymentLimits } = require('../utils/paymentLimits');
+const { encryptMemo, isEncryptionEnabled } = require('../utils/memoEncryption');
 const {
   convertToLocalCurrency,
   enrichPaymentWithConversion,
@@ -62,6 +64,9 @@ async function getPaymentInstructions(req, res, next) {
 
     res.json({
       walletAddress: req.school.stellarAddress,
+      memo: encryptMemo(req.params.studentId),
+      memoEncrypted: isEncryptionEnabled(),
+      acceptedAssets: Object.values(ACCEPTED_ASSETS).map(a => ({
       memo: req.params.studentId,
       acceptedAssets: Object.values(require('../config/stellarConfig').ACCEPTED_ASSETS || {}).map(a => ({
         code: a.code,
@@ -94,6 +99,9 @@ async function createPaymentIntent(req, res, next) {
       return res.status(404).json({ error: 'Student not found', code: 'NOT_FOUND' });
     }
 
+    const rawMemo = crypto.randomBytes(4).toString('hex').toUpperCase();
+    const memo = encryptMemo(rawMemo);
+    const ttlMs = parseInt(process.env.PAYMENT_INTENT_TTL_MS, 10) || 24 * 60 * 60 * 1000;
     const memo = crypto.randomBytes(4).toString('hex').toUpperCase();
     const ttlMs = parseInt(process.env.PAYMENT_INTENT_TTL_MS, 10) || 86400000;
     const expiresAt = new Date(Date.now() + ttlMs);

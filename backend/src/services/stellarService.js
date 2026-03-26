@@ -10,6 +10,8 @@ const SourceValidationRule = require('../models/sourceValidationRuleModel');
 
 const { validatePaymentAmount } = require('../utils/paymentLimits');
 const { generateReferenceCode } = require('../utils/generateReferenceCode');
+const { decryptMemo } = require('../utils/memoEncryption');
+const logger = require('../utils/logger').child('StellarService');
 
 function detectAsset(payOp) {
   const assetType = payOp.asset_type;
@@ -30,6 +32,13 @@ function normalizeAmount(rawAmount) {
 /**
  * Calculate dynamic adjusted fee using the Fee Adjustment Engine (#74)
  */
+async function extractValidPayment(tx, walletAddress) {
+  if (!tx.successful) return null;
+
+  const rawMemo = tx.memo ? tx.memo.trim() : null;
+  if (!rawMemo) return null;
+
+  const memo = decryptMemo(rawMemo);
 async function getAdjustedFee(student, intentAmount, paymentDate, schoolId) {
   const feeStructure = await FeeStructure.findOne({
     schoolId,
@@ -162,10 +171,17 @@ async function verifyTransaction(txHash, walletAddress) {
     throw Object.assign(new Error('Transaction failed'), { code: 'TX_FAILED' });
   }
 
+  const rawMemo = tx.memo ? tx.memo.trim() : null;
+  if (!rawMemo) {
+    const err = new Error('Transaction memo is missing or empty — cannot identify student');
+    err.code = 'MISSING_MEMO';
+    throw err;
   const memo = tx.memo ? tx.memo.trim() : null;
   if (!memo) {
     throw Object.assign(new Error('Missing memo'), { code: 'MISSING_MEMO' });
   }
+
+  const memo = decryptMemo(rawMemo);
 
   const ops = await tx.operations();
   const payOp = ops.records.find(op => op.type === 'payment' && op.to === walletAddress);
