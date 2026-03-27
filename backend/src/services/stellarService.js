@@ -485,6 +485,7 @@ async function verifyTransaction(txHash, walletAddress) {
     studentId: memo,
     amount,
     assetCode: asset.assetCode,
+    assetType: asset.assetType,
     baseFee,
     finalFee,
     adjustmentsApplied,
@@ -550,7 +551,7 @@ async function syncPaymentsForSchool(school) {
     const valid = await extractValidPayment(tx, stellarAddress);
     if (!valid) continue;
 
-    const { payOp, memo } = valid;
+    const { payOp, memo, asset } = valid;
 
     const intent = await PaymentIntent.findOne({
       schoolId,
@@ -700,6 +701,8 @@ async function syncPaymentsForSchool(school) {
       studentIdStr: intent.studentId,
       txHash: tx.hash,
       amount: paymentAmount,
+      assetCode: asset.assetCode,
+      assetType: asset.assetType,
       baseFee,
       finalFee,
       adjustmentsApplied,

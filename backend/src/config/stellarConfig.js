@@ -13,8 +13,8 @@ const networkPassphrase = config.IS_TESTNET
 
 const SCHOOL_WALLET = config.SCHOOL_WALLET_ADDRESS;
 
-// Accepted assets — add new entries here to support additional tokens
-const ACCEPTED_ASSETS = {
+// All known assets
+const ALL_ASSETS = {
   XLM: {
     code: 'XLM',
     type: 'native',
@@ -30,6 +30,16 @@ const ACCEPTED_ASSETS = {
     decimals: 7,
   },
 };
+
+// Only the asset configured via ACCEPTED_ASSET env var (default: XLM)
+const configuredAsset = ALL_ASSETS[config.ACCEPTED_ASSET];
+if (!configuredAsset) {
+  throw new Error(
+    `[Config] ACCEPTED_ASSET "${config.ACCEPTED_ASSET}" is not supported. Valid values: ${Object.keys(ALL_ASSETS).join(', ')}`
+  );
+}
+
+const ACCEPTED_ASSETS = { [configuredAsset.code]: configuredAsset };
 
 /**
  * Check whether an asset (by code and type) is accepted by the system.
