@@ -1,40 +1,35 @@
-# Transaction Fee Tracking
+# Add Dockerfile for Frontend Service
+
+Closes #235
 
 ## Summary
 
-Track network fees associated with each payment. Extract fees from Stellar transactions, store them in the database, and make them visible in the payment records.
-
-## Tasks
-
-- [x] Extract fee from transaction
-- [x] Store in database
+`docker-compose.yml` references `build: ./frontend` but no `Dockerfile` existed, causing `docker compose up` to fail for the frontend service. This PR adds the missing file along with the required Next.js config for standalone output.
 
 ## Changes
-
-### Modified Files
-
-| File | Description |
-| ---- | ----------- |
-| [`backend/src/models/paymentModel.js`](backend/src/models/paymentModel.js) | Added `networkFee` field |
-| [`backend/src/services/stellarService.js`](backend/src/services/stellarService.js) | Added fee extraction from Stellar transactions |
-| [`backend/src/controllers/paymentController.js`](backend/src/controllers/paymentController.js) | Stores and returns network fees in API |
 
 ### New Files
 
 | File | Description |
 | ---- | ----------- |
-| [`test_fee_tracking.js`](test_fee_tracking.js) | Integration test |
-| [`verify_fee_tracking.js`](verify_fee_tracking.js) | Verification script |
+| [`frontend/Dockerfile`](frontend/Dockerfile) | Multi-stage Docker build for the Next.js frontend |
+| [`frontend/next.config.js`](frontend/next.config.js) | Enables `output: 'standalone'` required by the Docker runner stage |
+
+### Modified Files
+
+| File | Description |
+| ---- | ----------- |
+| [`docker-compose.yml`](docker-compose.yml) | Passes `NEXT_PUBLIC_API_URL` as a build arg so it is baked in at build time |
+
+## Implementation Details
+
+- Two-stage build: `builder` compiles the Next.js app, `runner` serves only the standalone output (smaller final image)
+- `NEXT_PUBLIC_API_URL` is passed as a `ARG`/`ENV` during the build stage — Next.js inlines `NEXT_PUBLIC_*` vars at compile time, so a runtime `environment:` entry alone is not sufficient
+- Runs as a non-root user (`appuser`) for security
+- `output: 'standalone'` in `next.config.js` produces a self-contained `server.js` with minimal dependencies
 
 ## Acceptance Criteria
 
-- [x] Fees are recorded and visible
-
-## Implementation
-
-Network fees are extracted from Stellar transactions using:
-```javascript
-const networkFee = parseFloat(tx.fee_paid || '0') / 10000000;
-```
-
-The fees are stored in the payment record and returned in API responses.
+- [x] `docker compose up` builds and starts the frontend container successfully
+- [x] Frontend is accessible at `http://localhost:3000`
+- [x] `NEXT_PUBLIC_API_URL` is correctly injected at build time
