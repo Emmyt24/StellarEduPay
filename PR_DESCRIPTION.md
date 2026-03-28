@@ -41,6 +41,20 @@ Closes #235
 
 | File | Description |
 | ---- | ----------- |
+| [`frontend/src/pages/pay-fees.jsx`](frontend/src/pages/pay-fees.jsx) | Renders `<VerifyPayment />` below the payment instructions section |
+
+## Behaviour
+
+- Parent enters a transaction hash and clicks Verify
+- On success: shows amount, asset, student ID (memo), date, fee validation status, and network fee
+- On error: displays the API error message (e.g. `MISSING_MEMO`, `TX_FAILED`, `INVALID_DESTINATION`) or a fallback message
+- Fee validation status is colour-coded: green (valid), orange (overpaid), red (underpaid)
+
+## Acceptance Criteria
+
+- [x] Parents can enter a tx hash and see confirmation details
+- [x] Invalid or unrecognised hashes show a clear error
+- [x] Successful verification shows amount, memo, and date
 | [`docker-compose.yml`](docker-compose.yml) | Passes `NEXT_PUBLIC_API_URL` as a build arg so it is baked in at build time |
 
 ## Implementation Details
