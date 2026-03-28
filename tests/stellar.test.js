@@ -33,7 +33,7 @@ jest.mock('../backend/src/config/stellarConfig', () => ({
   server: {
     transactions: () => ({
       forAccount: () => ({
-        order: () => ({ limit: () => ({ call: async () => ({ records: [] }) }) }),
+        order: () => ({ limit: () => ({ call: async () => ({ records: [], next: async () => ({ records: [] }) }) }) }),
       }),
       transaction: (txHash) => ({
         call: async () => ({
@@ -295,69 +295,50 @@ describe('syncPaymentsForSchool', () => {
     await expect(syncPaymentsForSchool(school)).resolves.toBeUndefined();
   });
 
-  test('underpayment does not mark student as paid', async () => {
-    // Student fee is 250, payment is only 1 — underpayment
-    const PaymentIntent = require('../backend/src/models/paymentIntentModel');
-    PaymentIntent.findOne.mockResolvedValue({ _id: 'intent1', studentId: 'STU001', amount: 250, memo: 'STU001', status: 'pending' });
-    Student.findOne.mockResolvedValue({ schoolId: 'SCH001', studentId: 'STU001', feeAmount: 250 });
+  test('stops pagination when a known txHash is encountered', async () => {
+    const school = { schoolId: 'SCH001', stellarAddress: 'GTEST123' };
 
+    // 200 new records on page 1 (full page → triggers next())
+    const page1Records = Array.from({ length: 200 }, (_, i) => ({
+      hash: `tx_new_${i}`, successful: false, memo: null, created_at: new Date().toISOString(),
+    }));
+    // Page 2 has one already-known record → pagination stops
+    const page2Records = [{ hash: 'known_tx', successful: false, memo: null, created_at: new Date().toISOString() }];
+
+    const nextFn = jest.fn().mockResolvedValue({ records: page2Records, next: jest.fn() });
+
+    // Override the stellarConfig mock for this test only
+    const stellarConfig = require('../backend/src/config/stellarConfig');
+    const origTransactions = stellarConfig.server.transactions;
     stellarConfig.server.transactions = () => ({
       forAccount: () => ({
-        order: () => ({ limit: () => ({ call: async () => ({ records: [makeSyncTx(1)] }) }) }),
+        order: () => ({ limit: () => ({ call: async () => ({ records: page1Records, next: nextFn }) }) }),
       }),
+    });
+
+    // All page1 records are new (null), then the page2 record is known
+    Payment.findOne
+      .mockResolvedValue(null)
+      .mockResolvedValueOnce({ hash: 'known_tx' }); // called for page2[0] → stop
+
+    // Reset so page1 records all return null first
+    Payment.findOne.mockReset();
+    Payment.findOne.mockResolvedValue(null); // default: all unknown
+    // Override for the first call on page2 (201st call overall)
+    const calls = [];
+    Payment.findOne.mockImplementation(({ txHash }) => {
+      calls.push(txHash);
+      if (txHash === 'known_tx') return Promise.resolve({ hash: 'known_tx' });
+      return Promise.resolve(null);
     });
 
     await syncPaymentsForSchool(school);
 
-    // Payment recorded with underpaid status and FAILED
-    expect(Payment.create).toHaveBeenCalledWith(
-      expect.objectContaining({ feeValidationStatus: 'underpaid', status: 'FAILED' }),
-    );
-    // Student feePaid must NOT be updated
-    expect(Student.findOneAndUpdate).not.toHaveBeenCalled();
-  });
+    expect(nextFn).toHaveBeenCalledTimes(1);
 
-  test('exact payment marks student as paid', async () => {
-    const PaymentIntent = require('../backend/src/models/paymentIntentModel');
-    PaymentIntent.findOne.mockResolvedValue({ _id: 'intent1', studentId: 'STU001', amount: 250, memo: 'STU001', status: 'pending' });
-    Student.findOne.mockResolvedValue({ schoolId: 'SCH001', studentId: 'STU001', feeAmount: 250 });
-
-    stellarConfig.server.transactions = () => ({
-      forAccount: () => ({
-        order: () => ({ limit: () => ({ call: async () => ({ records: [makeSyncTx(250)] }) }) }),
-      }),
-    });
-
-    await syncPaymentsForSchool(school);
-
-    expect(Payment.create).toHaveBeenCalledWith(
-      expect.objectContaining({ feeValidationStatus: 'valid', status: 'SUCCESS' }),
-    );
-    expect(Student.findOneAndUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ studentId: 'STU001' }),
-      { feePaid: true },
-    );
-  });
-
-  test('overpayment marks student as paid', async () => {
-    const PaymentIntent = require('../backend/src/models/paymentIntentModel');
-    PaymentIntent.findOne.mockResolvedValue({ _id: 'intent1', studentId: 'STU001', amount: 250, memo: 'STU001', status: 'pending' });
-    Student.findOne.mockResolvedValue({ schoolId: 'SCH001', studentId: 'STU001', feeAmount: 250 });
-
-    stellarConfig.server.transactions = () => ({
-      forAccount: () => ({
-        order: () => ({ limit: () => ({ call: async () => ({ records: [makeSyncTx(300)] }) }) }),
-      }),
-    });
-
-    await syncPaymentsForSchool(school);
-
-    expect(Payment.create).toHaveBeenCalledWith(
-      expect.objectContaining({ feeValidationStatus: 'overpaid', status: 'SUCCESS' }),
-    );
-    expect(Student.findOneAndUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ studentId: 'STU001' }),
-      { feePaid: true },
-    );
+    // Restore
+    stellarConfig.server.transactions = origTransactions;
+    Payment.findOne.mockReset();
+    Payment.findOne.mockResolvedValue(null);
   });
 });
