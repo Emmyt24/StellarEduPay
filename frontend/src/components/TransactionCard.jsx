@@ -1,220 +1,152 @@
-/**
- * TransactionCard - displays a single payment record.
- *
- * Shows both the XLM/USDC amount and the local currency equivalent when available.
- * If the price feed was unavailable at verification time, only the asset amount is shown.
- * Supports dispute flagging inline.
- */
 import { useState } from 'react';
 import { flagDispute } from '../services/api';
 
-export default function TransactionCard({ payment, schoolId, schoolSlug }) {
-  const {
-    txHash,
-    amount,
-    assetCode = 'XLM',
-    confirmedAt,
-    studentId,
-    localCurrency,
-    stellarExplorerUrl,
-    explorerUrl,
-    dispute,
-  } = payment;
+const EXPLORER_BASE = process.env.NEXT_PUBLIC_STELLAR_EXPLORER_URL
+  || (process.env.NODE_ENV === 'production'
+      ? 'https://stellar.expert/explorer/public/tx/'
+      : 'https://stellar.expert/explorer/testnet/tx/');
 
-  const [disputeState, setDisputeState] = useState(dispute || null);
-  const [showForm, setShowForm] = useState(false);
-  const [raisedBy, setRaisedBy] = useState('');
-  const [reason, setReason] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState(null);
+function truncateHash(hash) {
+  return hash ? `${hash.slice(0, 6)}…${hash.slice(-4)}` : '—';
+}
 
-  const formattedAmount = `${parseFloat(amount).toFixed(7)} ${assetCode}`;
-  const formattedDate = confirmedAt ? new Date(confirmedAt).toLocaleString() : '-';
+function formatDate(iso) {
+  if (!iso) return '—';
+  return new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(iso));
+}
+
+const disputeColors = {
+  open:         '#e65100',
+  under_review: '#1565c0',
+  resolved:     '#2e7d32',
+  rejected:     '#757575',
+};
+
+/**
+ * TransactionCard — displays a single payment record.
+ *
+ * Accepts either flat props (txHash, amount, memo, confirmedAt) or a
+ * `payment` object prop for backwards-compatibility with PaymentForm.
+ */
+export default function TransactionCard({ payment, txHash, amount, memo, confirmedAt, schoolId, schoolSlug }) {
+  // Support both calling conventions
+  const tx          = payment?.txHash      ?? txHash      ?? '';
+  const amt         = payment?.amount      ?? amount      ?? null;
+  const ref         = payment?.memo        ?? memo        ?? null;
+  const date        = payment?.confirmedAt ?? confirmedAt ?? null;
+  const assetCode   = payment?.assetCode   ?? 'XLM';
+  const explorerUrl = payment?.explorerUrl ?? (tx ? `${EXPLORER_BASE}${tx}` : null);
+  const studentId   = payment?.studentId   ?? ref;
+  const localCurrency = payment?.localCurrency ?? null;
+  const initDispute   = payment?.dispute   ?? null;
+
+  const [disputeState, setDisputeState] = useState(initDispute);
+  const [showForm, setShowForm]         = useState(false);
+  const [raisedBy, setRaisedBy]         = useState('');
+  const [reason, setReason]             = useState('');
+  const [submitting, setSubmitting]     = useState(false);
+  const [formError, setFormError]       = useState(null);
+
   const hasLocal = localCurrency?.available && localCurrency?.amount != null;
-  const rateTime = localCurrency?.rateTimestamp
-    ? new Date(localCurrency.rateTimestamp).toLocaleTimeString([], {
-        hour: '2-digit',
-        minute: '2-digit',
-      })
-    : null;
-  const transactionExplorerUrl = stellarExplorerUrl || explorerUrl;
-
-  const disputeStatusColor = {
-    open: '#e65100',
-    under_review: '#1565c0',
-    resolved: '#2e7d32',
-    rejected: '#757575',
-  };
 
   async function handleFlagDispute(e) {
     e.preventDefault();
-    if (!raisedBy.trim() || !reason.trim()) return;
-
     setSubmitting(true);
-    setError(null);
-
+    setFormError(null);
     try {
-      const headers = {};
-      if (schoolId) headers['X-School-ID'] = schoolId;
-      if (schoolSlug) headers['X-School-Slug'] = schoolSlug;
-
-      const { data } = await flagDispute({ txHash, studentId, raisedBy, reason }, { headers });
+      const { data } = await flagDispute({ txHash: tx, studentId, raisedBy, reason });
       setDisputeState(data);
       setShowForm(false);
       setRaisedBy('');
       setReason('');
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to submit dispute.');
+      setFormError(err.response?.data?.error || 'Failed to submit dispute.');
     } finally {
       setSubmitting(false);
     }
   }
 
   return (
-    <div
-      style={{
-        border: disputeState ? '1px solid #e65100' : '1px solid #ddd',
-        borderRadius: 8,
-        padding: '0.75rem 1rem',
-        marginBottom: '0.5rem',
-        fontFamily: 'sans-serif',
-      }}
-    >
-      <p style={{ margin: 0 }}>
-        <strong>Amount:</strong> {formattedAmount}
+    <div style={{
+      border: disputeState ? '1px solid #e65100' : '1px solid #ddd',
+      borderRadius: 8,
+      padding: '0.75rem 1rem',
+      marginBottom: '0.5rem',
+      fontFamily: 'sans-serif',
+      boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+      background: '#fff',
+    }}>
+
+      {/* Amount */}
+      <p style={{ margin: 0, fontWeight: 600 }}>
+        {amt != null ? `${parseFloat(amt).toLocaleString(undefined, { maximumFractionDigits: 7 })} ${assetCode}` : '—'}
         {hasLocal && (
-          <span
-            style={{
-              marginLeft: '0.5rem',
-              color: '#2e7d32',
-              fontSize: '0.9rem',
-            }}
-          >
-            ~ {localCurrency.amount.toFixed(2)} {localCurrency.currency}
+          <span style={{ marginLeft: '0.5rem', color: '#2e7d32', fontWeight: 400, fontSize: '0.88rem' }}>
+            ≈ {localCurrency.amount.toFixed(2)} {localCurrency.currency}
           </span>
         )}
         {!hasLocal && localCurrency && (
-          <span style={{ marginLeft: '0.5rem', color: '#999', fontSize: '0.8rem' }}>
-            (rate unavailable)
-          </span>
+          <span style={{ marginLeft: '0.5rem', color: '#bbb', fontSize: '0.8rem' }}>(rate unavailable)</span>
         )}
       </p>
 
-      {hasLocal && rateTime && (
-        <p style={{ margin: '0.1rem 0 0', fontSize: '0.75rem', color: '#aaa' }}>
-          Rate as of {rateTime}
-        </p>
-      )}
+      {/* Student ID / Memo */}
+      <p style={{ margin: '0.3rem 0 0', fontSize: '0.85rem', color: '#555' }}>
+        <span style={{ color: '#888' }}>Student ID: </span>
+        <strong>{ref ?? '—'}</strong>
+      </p>
 
-      <p style={{ margin: '0.25rem 0', fontSize: '0.85rem', color: '#555' }}>
-        <strong>Tx:</strong>{' '}
-        <code style={{ wordBreak: 'break-all', fontSize: '0.8rem' }}>{txHash}</code>
-        {transactionExplorerUrl && (
+      {/* Tx Hash */}
+      <p style={{ margin: '0.3rem 0 0', fontSize: '0.82rem', color: '#555' }}>
+        <span style={{ color: '#888' }}>Tx: </span>
+        {tx ? (
           <a
             href={transactionExplorerUrl}
             target="_blank"
             rel="noopener noreferrer"
-            style={{ marginLeft: '0.5rem', fontSize: '0.8rem', color: '#1565c0' }}
-            aria-label="View transaction on Stellar Expert"
+            title={tx}
+            style={{ color: '#1565c0', fontFamily: 'monospace' }}
+            aria-label={`View transaction ${tx} on Stellar Explorer`}
           >
-            View on Explorer
+            {truncateHash(tx)}
           </a>
-        )}
+        ) : '—'}
       </p>
 
-      <p style={{ margin: 0, fontSize: '0.85rem', color: '#888' }}>
-        {formattedDate} - Student {studentId}
+      {/* Date */}
+      <p style={{ margin: '0.3rem 0 0', fontSize: '0.82rem', color: '#888' }}>
+        {formatDate(date)}
       </p>
 
+      {/* Dispute section */}
       {disputeState ? (
-        <p
-          style={{
-            margin: '0.5rem 0 0',
-            fontSize: '0.8rem',
-            color: disputeStatusColor[disputeState.status] || '#555',
-          }}
-          aria-label={`Dispute status: ${disputeState.status}`}
-        >
-          Dispute {disputeState.status.replace('_', ' ')}
-          {disputeState.resolutionNote && ` - ${disputeState.resolutionNote}`}
+        <p style={{ margin: '0.5rem 0 0', fontSize: '0.8rem', color: disputeColors[disputeState.status] || '#555' }}
+           aria-label={`Dispute status: ${disputeState.status}`}>
+          ⚑ Dispute {disputeState.status.replace('_', ' ')}
+          {disputeState.resolutionNote && ` — ${disputeState.resolutionNote}`}
         </p>
       ) : (
         <div style={{ marginTop: '0.5rem' }}>
           {!showForm ? (
-            <button
-              onClick={() => setShowForm(true)}
-              style={{
-                fontSize: '0.78rem',
-                color: '#e65100',
-                background: 'none',
-                border: 'none',
-                cursor: 'pointer',
-                padding: 0,
-                textDecoration: 'underline',
-              }}
-              aria-label="Flag this payment as disputed"
-            >
+            <button onClick={() => setShowForm(true)}
+              style={{ fontSize: '0.78rem', color: '#e65100', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+              aria-label="Flag this payment as disputed">
               Flag as disputed
             </button>
           ) : (
             <form onSubmit={handleFlagDispute} style={{ marginTop: '0.25rem' }}>
-              <input
-                type="text"
-                placeholder="Your name"
-                value={raisedBy}
-                onChange={(e) => setRaisedBy(e.target.value)}
-                required
-                style={{
-                  display: 'block',
-                  width: '100%',
-                  marginBottom: '0.25rem',
-                  fontSize: '0.8rem',
-                  padding: '0.2rem 0.4rem',
-                }}
-                aria-label="Your name"
-              />
-              <textarea
-                placeholder="Describe the issue"
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                required
-                rows={2}
-                style={{
-                  display: 'block',
-                  width: '100%',
-                  marginBottom: '0.25rem',
-                  fontSize: '0.8rem',
-                  padding: '0.2rem 0.4rem',
-                  resize: 'vertical',
-                }}
-                aria-label="Dispute reason"
-              />
-              {error && (
-                <p style={{ color: '#c62828', fontSize: '0.78rem', margin: '0 0 0.25rem' }} role="alert">
-                  {error}
-                </p>
-              )}
-              <button
-                type="submit"
-                disabled={submitting}
-                style={{ fontSize: '0.78rem', marginRight: '0.5rem', cursor: 'pointer' }}
-              >
-                {submitting ? 'Submitting...' : 'Submit dispute'}
+              <input type="text" placeholder="Your name" value={raisedBy} onChange={(e) => setRaisedBy(e.target.value)} required
+                style={{ display: 'block', width: '100%', marginBottom: '0.25rem', fontSize: '0.8rem', padding: '0.2rem 0.4rem', boxSizing: 'border-box' }}
+                aria-label="Your name" />
+              <textarea placeholder="Describe the issue" value={reason} onChange={(e) => setReason(e.target.value)} required rows={2}
+                style={{ display: 'block', width: '100%', marginBottom: '0.25rem', fontSize: '0.8rem', padding: '0.2rem 0.4rem', resize: 'vertical', boxSizing: 'border-box' }}
+                aria-label="Dispute reason" />
+              {formError && <p style={{ color: '#c62828', fontSize: '0.78rem', margin: '0 0 0.25rem' }} role="alert">{formError}</p>}
+              <button type="submit" disabled={submitting} style={{ fontSize: '0.78rem', marginRight: '0.5rem', cursor: 'pointer' }}>
+                {submitting ? 'Submitting…' : 'Submit dispute'}
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowForm(false);
-                  setError(null);
-                }}
-                style={{
-                  fontSize: '0.78rem',
-                  cursor: 'pointer',
-                  background: 'none',
-                  border: 'none',
-                  textDecoration: 'underline',
-                }}
-              >
+              <button type="button" onClick={() => { setShowForm(false); setFormError(null); }}
+                style={{ fontSize: '0.78rem', cursor: 'pointer', background: 'none', border: 'none', textDecoration: 'underline' }}>
                 Cancel
               </button>
             </form>
