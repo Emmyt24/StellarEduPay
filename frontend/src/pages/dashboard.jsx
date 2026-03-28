@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from 'react';
-import Navbar from '../components/Navbar';
 import SyncButton from '../components/SyncButton';
 import { getStudents, getSyncStatus } from '../services/api';
 
@@ -79,7 +78,6 @@ export default function Dashboard() {
 
   return (
     <>
-      <Navbar />
       <style>{`
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.45} }
         table { border-collapse: collapse; width: 100%; }
