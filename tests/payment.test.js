@@ -8,6 +8,10 @@ const request = require('supertest');
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
+jest.mock('../backend/src/middleware/auth', () => ({
+  requireAdminAuth: (req, res, next) => next(),
+}));
+
 jest.mock('mongoose', () => ({
   connect: jest.fn().mockResolvedValue(true),
   Schema: class {
@@ -22,12 +26,20 @@ jest.mock('mongoose', () => ({
 // const declarations, which would make the variable undefined inside the factory.
 const MOCK_STUDENT_OBJ_ID = '507f1f77bcf86cd799439011';
 
-jest.mock('../backend/src/models/studentModel', () => ({
-  create: jest.fn().mockResolvedValue({ _id: '507f1f77bcf86cd799439011', studentId: 'STU001', name: 'Alice', class: '5A', feeAmount: 200, feePaid: false }),
-  find: jest.fn().mockReturnValue({ sort: jest.fn().mockResolvedValue([{ _id: '507f1f77bcf86cd799439011', studentId: 'STU001', name: 'Alice', class: '5A', feeAmount: 200, feePaid: false }]) }),
-  findOne: jest.fn().mockResolvedValue({ _id: '507f1f77bcf86cd799439011', studentId: 'STU001', name: 'Alice', class: '5A', feeAmount: 200, feePaid: false }),
-  findOneAndUpdate: jest.fn().mockResolvedValue({}),
-}));
+jest.mock('../backend/src/models/studentModel', () => {
+  const mockStudents = [{ _id: '507f1f77bcf86cd799439011', studentId: 'STU001', name: 'Alice', class: '5A', feeAmount: 200, feePaid: false }];
+  const chainable = { sort: jest.fn(), skip: jest.fn(), limit: jest.fn() };
+  chainable.sort.mockReturnValue(chainable);
+  chainable.skip.mockReturnValue(chainable);
+  chainable.limit.mockResolvedValue(mockStudents);
+  return {
+    create: jest.fn().mockResolvedValue({ _id: '507f1f77bcf86cd799439011', studentId: 'STU001', name: 'Alice', class: '5A', feeAmount: 200, feePaid: false }),
+    find: jest.fn().mockReturnValue(chainable),
+    findOne: jest.fn().mockResolvedValue({ _id: '507f1f77bcf86cd799439011', studentId: 'STU001', name: 'Alice', class: '5A', feeAmount: 200, feePaid: false }),
+    findOneAndUpdate: jest.fn().mockResolvedValue({}),
+    countDocuments: jest.fn().mockResolvedValue(1),
+  };
+});
 
 jest.mock('../backend/src/models/paymentModel', () => ({
   find: jest.fn().mockReturnValue({
@@ -36,9 +48,7 @@ jest.mock('../backend/src/models/paymentModel', () => ({
       populate: jest.fn().mockResolvedValue([{ studentId: { studentId: 'STU001', name: 'Alice' }, txHash: 'abc123', amount: 200 }]),
     }),
   }),
-  findOne: jest.fn().mockReturnValue({
-    sort: jest.fn().mockResolvedValue(null),
-  }),
+  findOne: jest.fn().mockResolvedValue(null),
   create: jest.fn().mockResolvedValue({}),
   aggregate: jest.fn().mockResolvedValue([]),
   countDocuments: jest.fn().mockResolvedValue(0),
@@ -241,10 +251,47 @@ describe('Student API', () => {
     expect(res.body).toHaveProperty('studentId', 'STU001');
   });
 
+  test('POST /api/students — 400 when name is missing', async () => {
+    const res = await testApi.post('/api/students').send({ studentId: 'STU002', class: '5A', feeAmount: 200 });
+    expect(res.status).toBe(400);
+    expect(res.body.errors.some(e => e.field === 'name')).toBe(true);
+  });
+
+  test('POST /api/students — 400 when class is missing', async () => {
+    const res = await testApi.post('/api/students').send({ studentId: 'STU002', name: 'Bob', feeAmount: 200 });
+    expect(res.status).toBe(400);
+    expect(res.body.errors.some(e => e.field === 'class')).toBe(true);
+  });
+
+  test('POST /api/students — 400 when studentId format is invalid', async () => {
+    const res = await testApi.post('/api/students').send({ studentId: '!!', name: 'Bob', class: '5A' });
+    expect(res.status).toBe(400);
+    expect(res.body.errors.some(e => e.field === 'studentId')).toBe(true);
+  });
+
+  test('POST /api/students — 400 when feeAmount is not a positive number', async () => {
+    const res = await testApi.post('/api/students').send({ name: 'Bob', class: '5A', feeAmount: -10 });
+    expect(res.status).toBe(400);
+    expect(res.body.errors.some(e => e.field === 'feeAmount')).toBe(true);
+  });
+
+  test('POST /api/students — sanitizes whitespace from name and class', async () => {
+    const Student = require('../backend/src/models/studentModel');
+    Student.findOne.mockResolvedValueOnce(null);
+    Student.findOne.mockResolvedValueOnce(null);
+    const res = await testApi.post('/api/students').send({
+      studentId: 'STU003', name: '  Carol  ', class: '  5A  ', feeAmount: 200,
+    });
+    expect(res.status).toBe(201);
+  });
+
   test('GET /api/students — returns all students', async () => {
     const res = await testApi.get('/api/students');
     expect(res.status).toBe(200);
-    expect(Array.isArray(res.body)).toBe(true);
+    expect(Array.isArray(res.body.students)).toBe(true);
+    expect(res.body).toHaveProperty('total');
+    expect(res.body).toHaveProperty('page');
+    expect(res.body).toHaveProperty('pages');
   });
 
   test('GET /api/students/:studentId — returns a student', async () => {
@@ -328,7 +375,7 @@ describe('Payment Intent API', () => {
   test('POST /api/payments/intent — creates a payment intent', async () => {
     const res = await testApi.post('/api/payments/intent')
       .set('Idempotency-Key', 'test-intent-stu001')
-      .send({ studentId: 'STU001' });
+      .send({ studentId: MOCK_STUDENT_OBJ_ID });
     expect(res.status).toBe(201);
     expect(res.body).toHaveProperty('memo');
     expect(res.body).toHaveProperty('amount', 200);
@@ -367,7 +414,7 @@ describe('Payment Intent API', () => {
     Student.findOne.mockResolvedValueOnce(null);
     const res = await testApi.post('/api/payments/intent')
       .set('Idempotency-Key', 'test-intent-unknown')
-      .send({ studentId: 'UNKNOWN' });
+      .send({ studentId: MOCK_STUDENT_OBJ_ID });
     expect(res.status).toBe(404);
   });
 });
@@ -446,7 +493,7 @@ describe('Idempotency', () => {
   });
 
   test('POST /api/payments/intent — 400 when Idempotency-Key header is missing', async () => {
-    const res = await testApi.post('/api/payments/intent').send({ studentId: 'STU001' });
+    const res = await testApi.post('/api/payments/intent').send({ studentId: MOCK_STUDENT_OBJ_ID });
     expect(res.status).toBe(400);
     expect(res.body).toHaveProperty('code', 'MISSING_IDEMPOTENCY_KEY');
   });
@@ -471,7 +518,7 @@ describe('Idempotency', () => {
 
     const res = await testApi.post('/api/payments/intent')
       .set('Idempotency-Key', 'dupe-intent-key')
-      .send({ studentId: 'STU001' });
+      .send({ studentId: MOCK_STUDENT_OBJ_ID });
 
     expect(res.status).toBe(201);
     expect(res.body).toEqual(cachedBody);
@@ -489,7 +536,7 @@ describe('Idempotency', () => {
 
     const res = await testApi.post('/api/payments/verify')
       .set('Idempotency-Key', 'dupe-verify-key')
-      .send({ txHash: 'abc123' });
+      .send({ txHash: 'a'.repeat(64) });
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual(cachedBody);
@@ -500,7 +547,7 @@ describe('Idempotency', () => {
 
     await testApi.post('/api/payments/intent')
       .set('Idempotency-Key', 'new-intent-key')
-      .send({ studentId: 'STU001' });
+      .send({ studentId: MOCK_STUDENT_OBJ_ID });
 
     expect(IdempotencyKey.create).toHaveBeenCalledWith(
       expect.objectContaining({

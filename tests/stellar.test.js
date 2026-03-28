@@ -33,7 +33,7 @@ jest.mock('../backend/src/config/stellarConfig', () => ({
   server: {
     transactions: () => ({
       forAccount: () => ({
-        order: () => ({ limit: () => ({ call: async () => ({ records: [] }) }) }),
+        order: () => ({ limit: () => ({ call: async () => ({ records: [], next: async () => ({ records: [] }) }) }) }),
       }),
       transaction: (txHash) => ({
         call: async () => ({
@@ -54,6 +54,7 @@ jest.mock('../backend/src/config/stellarConfig', () => ({
 jest.mock('../backend/src/models/paymentModel', () => ({
   findOne: jest.fn(),
   create: jest.fn().mockResolvedValue({}),
+  exists: jest.fn().mockResolvedValue(false),
 }));
 
 jest.mock('../backend/src/models/paymentIntentModel', () => ({
@@ -220,7 +221,6 @@ describe('verifyTransaction', () => {
     });
     await expect(verifyTransaction('abc123', 'GTEST123')).rejects.toMatchObject({ code: 'UNSUPPORTED_ASSET' });
   });
-});
 
   test('feeValidation status is unknown when student not found', async () => {
     Student.findOne.mockResolvedValue(null);
@@ -260,9 +260,85 @@ describe('parseIncomingTransaction', () => {
 
 // ─── syncPayments ─────────────────────────────────────────────────────────────
 
+// Shared mock transaction factory for sync tests
+function makeSyncTx(amount, memo = 'STU001') {
+  return {
+    hash: `tx-${amount}`,
+    successful: true,
+    memo,
+    created_at: new Date().toISOString(),
+    ledger_attr: 90, // below CONFIRMATION_THRESHOLD of 2 from sequence 100 → confirmed
+    operations: jest.fn().mockResolvedValue({
+      records: [{
+        type: 'payment',
+        to: 'GTEST123',
+        from: 'GSENDER',
+        amount: String(amount),
+        asset_type: 'native',
+      }],
+    }),
+  };
+}
+
+const stellarConfig = require('../backend/src/config/stellarConfig');
+
 describe('syncPaymentsForSchool', () => {
+  const school = { schoolId: 'SCH001', stellarAddress: 'GTEST123' };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    Payment.findOne.mockResolvedValue(null); // tx not yet recorded
+    Payment.exists.mockResolvedValue(false);
+  });
+
   test('resolves without error when no transactions exist', async () => {
-    const school = { schoolId: 'SCH001', stellarAddress: 'GTEST123' };
     await expect(syncPaymentsForSchool(school)).resolves.toBeUndefined();
+  });
+
+  test('stops pagination when a known txHash is encountered', async () => {
+    const school = { schoolId: 'SCH001', stellarAddress: 'GTEST123' };
+
+    // 200 new records on page 1 (full page → triggers next())
+    const page1Records = Array.from({ length: 200 }, (_, i) => ({
+      hash: `tx_new_${i}`, successful: false, memo: null, created_at: new Date().toISOString(),
+    }));
+    // Page 2 has one already-known record → pagination stops
+    const page2Records = [{ hash: 'known_tx', successful: false, memo: null, created_at: new Date().toISOString() }];
+
+    const nextFn = jest.fn().mockResolvedValue({ records: page2Records, next: jest.fn() });
+
+    // Override the stellarConfig mock for this test only
+    const stellarConfig = require('../backend/src/config/stellarConfig');
+    const origTransactions = stellarConfig.server.transactions;
+    stellarConfig.server.transactions = () => ({
+      forAccount: () => ({
+        order: () => ({ limit: () => ({ call: async () => ({ records: page1Records, next: nextFn }) }) }),
+      }),
+    });
+
+    // All page1 records are new (null), then the page2 record is known
+    Payment.findOne
+      .mockResolvedValue(null)
+      .mockResolvedValueOnce({ hash: 'known_tx' }); // called for page2[0] → stop
+
+    // Reset so page1 records all return null first
+    Payment.findOne.mockReset();
+    Payment.findOne.mockResolvedValue(null); // default: all unknown
+    // Override for the first call on page2 (201st call overall)
+    const calls = [];
+    Payment.findOne.mockImplementation(({ txHash }) => {
+      calls.push(txHash);
+      if (txHash === 'known_tx') return Promise.resolve({ hash: 'known_tx' });
+      return Promise.resolve(null);
+    });
+
+    await syncPaymentsForSchool(school);
+
+    expect(nextFn).toHaveBeenCalledTimes(1);
+
+    // Restore
+    stellarConfig.server.transactions = origTransactions;
+    Payment.findOne.mockReset();
+    Payment.findOne.mockResolvedValue(null);
   });
 });

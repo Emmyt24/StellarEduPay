@@ -7,22 +7,30 @@ const {
   registerStudent,
   getAllStudents,
   getStudent,
+  updateStudent,
+  deleteStudent,
   getPaymentSummary,
   bulkImportStudents,
   getOverdueStudents,
 } = require('../controllers/studentController');
 const { validateRegisterStudent, validateStudentIdParam } = require('../middleware/validate');
 const { resolveSchool } = require('../middleware/schoolContext');
+const { requireAdminAuth } = require('../middleware/auth');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 router.use(resolveSchool);
 
-router.post('/',          validateRegisterStudent, registerStudent);
-router.post('/bulk',      upload.single('file'),   bulkImportStudents);
+// Admin-only routes
+router.post('/',          requireAdminAuth, validateRegisterStudent, registerStudent);
+router.post('/bulk',      requireAdminAuth, upload.single('file'),   bulkImportStudents);
+router.get('/',           requireAdminAuth, getAllStudents);
+
+// Public routes
 router.get('/summary',    getPaymentSummary);
 router.get('/overdue',    getOverdueStudents);
-router.get('/',           getAllStudents);
-router.get('/:studentId', validateStudentIdParam,  getStudent);
+router.get('/:studentId',    validateStudentIdParam, getStudent);
+router.put('/:studentId',    requireAdminAuth, validateStudentIdParam, updateStudent);
+router.delete('/:studentId', requireAdminAuth, validateStudentIdParam, deleteStudent);
 
 module.exports = router;

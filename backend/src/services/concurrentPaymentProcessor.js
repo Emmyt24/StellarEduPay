@@ -1,86 +1,49 @@
-/**
- * Concurrent Payment Processor Service
- * 
- * Production-ready payment processor optimized for high-traffic concurrent
- * financial transactions. Implements multiple safety mechanisms:
- * 
- * - Atomic database operations with transactions
- * - Optimistic and pessimistic locking strategies
- * - Automatic retry with exponential backoff
- * - Race condition prevention
- * - Deadlock detection and recovery
- * - Idempotency key support
- * - Request deduplication
- */
+"use strict";
 
-'use strict';
+const mongoose = require("mongoose");
+const { transactionManager } = require("./transactionManager");
+const { logger } = require("../utils/logger");
+const Student = require("../models/studentModel");
+const Payment = require("../models/paymentModel");
+const PaymentIntent = require("../models/paymentIntentModel");
+const { sendPaymentWebhook } = require("./webhookService");
 
-const mongoose = require('mongoose');
-const { transactionManager, LOCK_TYPE, safeCredit } = require('./transactionManager');
-const { logger } = require('../utils/logger');
-const Student = require('../models/studentModel');
-const Payment = require('../models/paymentModel');
-const PaymentIntent = require('../models/paymentIntentModel');
-
-// ── Idempotency Cache (In-Memory with TTL) ─────────────────────────────────────
+// ── Idempotency Cache ─────────────────────────────────────────────────────────
 class IdempotencyCache {
   constructor(ttlMs = 60000) {
     this.cache = new Map();
     this.ttlMs = ttlMs;
   }
 
-  /**
-   * Check if a key exists and is not expired
-   */
   has(key) {
     const entry = this.cache.get(key);
     if (!entry) return false;
-    
     if (Date.now() > entry.expiresAt) {
       this.cache.delete(key);
       return false;
     }
-    
     return true;
   }
 
-  /**
-   * Get cached result for a key
-   */
   get(key) {
     if (!this.has(key)) return null;
     return this.cache.get(key).result;
   }
 
-  /**
-   * Set a key with result
-   */
   set(key, result) {
-    this.cache.set(key, {
-      result,
-      expiresAt: Date.now() + this.ttlMs,
-    });
-
-    // Cleanup expired entries periodically
-    if (this.cache.size % 100 === 0) {
-      this.cleanup();
-    }
+    this.cache.set(key, { result, expiresAt: Date.now() + this.ttlMs });
+    if (this.cache.size % 100 === 0) this.cleanup();
   }
 
-  /**
-   * Cleanup expired entries
-   */
   cleanup() {
     const now = Date.now();
     for (const [key, entry] of this.cache.entries()) {
-      if (now > entry.expiresAt) {
-        this.cache.delete(key);
-      }
+      if (now > entry.expiresAt) this.cache.delete(key);
     }
   }
 }
 
-// ── Rate Limiter ────────────────────────────────────────────────────────────────
+// ── Rate Limiter ───────────────────────────────────────────────────────────────
 class RateLimiter {
   constructor(options = {}) {
     this.maxRequests = options.maxRequests || 100;
@@ -88,57 +51,44 @@ class RateLimiter {
     this.requests = new Map();
   }
 
-  /**
-   * Check if request is allowed
-   */
   isAllowed(key) {
     const now = Date.now();
     const windowStart = now - this.windowMs;
-    
-    // Get or initialize request tracking
-    let requestInfo = this.requests.get(key);
-    
-    if (!requestInfo || requestInfo.windowStart < windowStart) {
-      requestInfo = {
-        windowStart: now,
-        count: 0,
-      };
+    let info = this.requests.get(key);
+
+    if (!info || info.windowStart < windowStart) {
+      info = { windowStart: now, count: 0 };
     }
 
-    requestInfo.count++;
-    this.requests.set(key, requestInfo);
+    info.count++;
+    this.requests.set(key, info);
 
-    if (requestInfo.count > this.maxRequests) {
+    if (info.count > this.maxRequests) {
       return {
         allowed: false,
-        retryAfterMs: this.windowMs - (now - requestInfo.windowStart),
+        retryAfterMs: this.windowMs - (now - info.windowStart),
       };
     }
 
-    return { allowed: true, remaining: this.maxRequests - requestInfo.count };
+    return { allowed: true, remaining: this.maxRequests - info.count };
   }
 
-  /**
-   * Cleanup old entries
-   */
   cleanup() {
     const windowStart = Date.now() - this.windowMs * 2;
     for (const [key, info] of this.requests.entries()) {
-      if (info.windowStart < windowStart) {
-        this.requests.delete(key);
-      }
+      if (info.windowStart < windowStart) this.requests.delete(key);
     }
   }
 }
 
-// ── Concurrency Types ──────────────────────────────────────────────────────────
+// ── Concurrency Strategies ────────────────────────────────────────────────────
 const CONCURRENCY_STRATEGY = {
-  OPTIMISTIC: 'optimistic',
-  PESSIMISTIC: 'pessimistic',
-  SERIALIZABLE: 'serializable',
+  OPTIMISTIC: "optimistic",
+  PESSIMISTIC: "pessimistic",
+  SERIALIZABLE: "serializable",
 };
 
-// ── Payment Processing Result ──────────────────────────────────────────────────
+// ── Payment Result ───────────────────────────────────────────────────────────
 class PaymentProcessingResult {
   constructor(success, data = {}, error = null) {
     this.success = success;
@@ -151,31 +101,31 @@ class PaymentProcessingResult {
     return {
       success: this.success,
       data: this.data,
-      error: this.error ? {
-        message: this.error.message,
-        code: this.error.code,
-      } : null,
+      error: this.error
+        ? { message: this.error.message, code: this.error.code }
+        : null,
       timestamp: this.timestamp,
     };
   }
 }
 
-// ── Main Service Class ──────────────────────────────────────────────────────────
+// ── Main Processor ───────────────────────────────────────────────────────────
 class ConcurrentPaymentProcessor {
   constructor(options = {}) {
-    this.idempotencyCache = new IdempotencyCache(options.idempotencyTtlMs || 60000);
+    this.idempotencyCache = new IdempotencyCache(
+      options.idempotencyTtlMs || 60000
+    );
     this.rateLimiter = new RateLimiter({
       maxRequests: options.maxRequestsPerSecond || 100,
       windowMs: 1000,
     });
-    this.defaultLockStrategy = options.lockStrategy || CONCURRENCY_STRATEGY.OPTIMISTIC;
+    this.defaultLockStrategy =
+      options.lockStrategy || CONCURRENCY_STRATEGY.OPTIMISTIC;
     this.lockTimeoutMs = options.lockTimeoutMs || 30000;
     this.maxRetries = options.maxRetries || 3;
   }
 
-  /**
-   * Process a payment with full concurrency protection
-   */
+  // ── Process Payment ───────────────────────────────────────────────────────
   async processPayment(paymentData, options = {}) {
     const {
       idempotencyKey,
@@ -185,27 +135,33 @@ class ConcurrentPaymentProcessor {
       txHash,
     } = options;
 
-    // ── Step 1: Idempotency Check ─────────────────────────────────────────────
+    // Idempotency check
     if (idempotencyKey && this.idempotencyCache.has(idempotencyKey)) {
-      logger.info('[PaymentProcessor] Returning cached result', { idempotencyKey });
+      logger.info("[PaymentProcessor] Returning cached result", {
+        idempotencyKey,
+      });
       return this.idempotencyCache.get(idempotencyKey);
     }
 
-    // ── Step 2: Rate Limiting ─────────────────────────────────────────────────
+    // Rate limit check
     const rateLimitResult = this.rateLimiter.isAllowed(`payment:${studentId}`);
     if (!rateLimitResult.allowed) {
-      return new PaymentProcessingResult(false, {}, {
-        message: 'Rate limit exceeded',
-        code: 'RATE_LIMIT_EXCEEDED',
-        retryAfterMs: rateLimitResult.retryAfterMs,
-      });
+      return new PaymentProcessingResult(
+        false,
+        {},
+        {
+          message: "Rate limit exceeded",
+          code: "RATE_LIMIT_EXCEEDED",
+          retryAfterMs: rateLimitResult.retryAfterMs,
+        }
+      );
     }
 
     try {
-      // ── Step 3: Check for Duplicate Transaction ─────────────────────────────
+      // Duplicate transaction
       const existingPayment = await Payment.findOne({ txHash });
       if (existingPayment) {
-        logger.warn('[PaymentProcessor] Duplicate transaction', { txHash });
+        logger.warn("[PaymentProcessor] Duplicate transaction", { txHash });
         const result = new PaymentProcessingResult(true, {
           duplicate: true,
           existingPaymentId: existingPayment._id,
@@ -214,9 +170,8 @@ class ConcurrentPaymentProcessor {
         return result;
       }
 
-      // ── Step 4: Process with Chosen Lock Strategy ────────────────────────────
+      // Choose lock strategy
       let processingResult;
-      
       switch (lockStrategy) {
         case CONCURRENCY_STRATEGY.PESSIMISTIC:
           processingResult = await this.processWithPessimisticLock(
@@ -226,7 +181,6 @@ class ConcurrentPaymentProcessor {
             paymentData
           );
           break;
-          
         case CONCURRENCY_STRATEGY.SERIALIZABLE:
           processingResult = await this.processWithSerializableTransaction(
             studentId,
@@ -235,7 +189,6 @@ class ConcurrentPaymentProcessor {
             paymentData
           );
           break;
-          
         case CONCURRENCY_STRATEGY.OPTIMISTIC:
         default:
           processingResult = await this.processWithOptimisticLock(
@@ -244,64 +197,88 @@ class ConcurrentPaymentProcessor {
             txHash,
             paymentData
           );
-          break;
       }
 
-      // ── Step 5: Cache Successful Result ─────────────────────────────────────
-      if (idempotencyKey && processingResult.success) {
+      // Cache success
+      if (idempotencyKey && processingResult.success)
         this.idempotencyCache.set(idempotencyKey, processingResult);
-      }
+
+      // Trigger webhook (non-blocking)
+      this.triggerWebhook(
+        studentId,
+        amount,
+        txHash,
+        paymentData,
+        processingResult
+      );
 
       return processingResult;
-    } catch (error) {
-      logger.error('[PaymentProcessor] Processing failed', {
-        studentId,
-        txHash,
-        error: error.message,
-        code: error.code,
-      });
-
-      const result = new PaymentProcessingResult(false, {}, error);
-      
-      if (idempotencyKey) {
-        this.idempotencyCache.set(idempotencyKey, result);
-      }
-
-      return result;
+    } catch (err) {
+      return new PaymentProcessingResult(
+        false,
+        {},
+        { message: err.message, code: "PROCESSING_ERROR" }
+      );
     }
   }
 
-  /**
-   * Process with Optimistic Locking
-   * Best for: Low contention scenarios, read-heavy workloads
-   */
+  // ── Webhook trigger ───────────────────────────────────────────────────────
+  async triggerWebhook(
+    studentId,
+    amount,
+    txHash,
+    paymentData,
+    processingResult
+  ) {
+    if (processingResult.success && process.env.PAYMENT_WEBHOOK_URL) {
+      try {
+        const { payment } = processingResult.data;
+        if (payment) {
+          sendPaymentWebhook(process.env.PAYMENT_WEBHOOK_URL, {
+            paymentId: payment._id,
+            studentId,
+            amount,
+            currency: paymentData.currency || "USDC",
+            status: "confirmed",
+            txHash,
+            timestamp: new Date().toISOString(),
+          });
+          logger.info("[Webhook] Triggered", { paymentId: payment._id });
+        }
+      } catch (err) {
+        logger.error("[Webhook] Failed to trigger", {
+          error: err.message,
+          studentId,
+          txHash,
+        });
+      }
+    }
+  }
+
+  // ── Optimistic Lock ──────────────────────────────────────────────────────
   async processWithOptimisticLock(studentId, amount, txHash, paymentData) {
     let attempt = 0;
-    
+
     while (attempt < this.maxRetries) {
       try {
-        // Get current student state with version
         const student = await Student.findOne({ studentId });
-        
-        if (!student) {
-          return new PaymentProcessingResult(false, {}, {
-            message: `Student not found: ${studentId}`,
-            code: 'STUDENT_NOT_FOUND',
-          });
-        }
+        if (!student)
+          return new PaymentProcessingResult(
+            false,
+            {},
+            {
+              message: `Student not found: ${studentId}`,
+              code: "STUDENT_NOT_FOUND",
+            }
+          );
 
-        // Calculate new totals
         const currentTotal = student.totalPaid || 0;
         const newTotal = currentTotal + amount;
         const newRemainingBalance = Math.max(0, student.feeAmount - newTotal);
         const isFeePaid = newTotal >= student.feeAmount;
 
-        // Attempt atomic update with version check
         const updatedStudent = await Student.findOneAndUpdate(
-          {
-            studentId,
-            totalPaid: currentTotal, // Version-like check
-          },
+          { studentId, totalPaid: currentTotal },
           {
             $set: {
               totalPaid: newTotal,
@@ -315,26 +292,28 @@ class ConcurrentPaymentProcessor {
         );
 
         if (!updatedStudent) {
-          // Version mismatch - concurrent modification detected
           attempt++;
-          const delay = 100 * Math.pow(2, attempt);
-          logger.warn('[PaymentProcessor] Optimistic lock conflict', {
+          await new Promise((resolve) =>
+            setTimeout(resolve, 100 * Math.pow(2, attempt))
+          );
+          logger.warn("[PaymentProcessor] Optimistic lock conflict", {
             studentId,
             attempt,
-            maxRetries: this.maxRetries,
           });
-          await new Promise(resolve => setTimeout(resolve, delay));
           continue;
         }
 
-        // Create payment record
         const payment = await Payment.create({
           studentId,
           txHash,
           amount,
           feeAmount: student.feeAmount,
-          feeValidationStatus: isFeePaid ? 'valid' : (amount < student.feeAmount ? 'underpaid' : 'overpaid'),
-          status: 'confirmed',
+          feeValidationStatus: isFeePaid
+            ? "valid"
+            : amount < student.feeAmount
+            ? "underpaid"
+            : "overpaid",
+          status: "confirmed",
           ...paymentData,
         });
 
@@ -345,51 +324,46 @@ class ConcurrentPaymentProcessor {
           remainingBalance: newRemainingBalance,
           feePaid: isFeePaid,
         });
-
       } catch (error) {
         if (this.isRetryableError(error)) {
           attempt++;
-          const delay = 100 * Math.pow(2, attempt);
-          logger.warn('[PaymentProcessor] Retrying after error', {
+          await new Promise((resolve) =>
+            setTimeout(resolve, 100 * Math.pow(2, attempt))
+          );
+          logger.warn("[PaymentProcessor] Retrying after error", {
             studentId,
             attempt,
             error: error.message,
           });
-          await new Promise(resolve => setTimeout(resolve, delay));
           continue;
         }
         throw error;
       }
     }
 
-    return new PaymentProcessingResult(false, {}, {
-      message: `Failed after ${this.maxRetries} attempts due to concurrent modifications`,
-      code: 'MAX_RETRIES_EXCEEDED',
-    });
+    return new PaymentProcessingResult(
+      false,
+      {},
+      {
+        message: `Failed after ${this.maxRetries} attempts`,
+        code: "MAX_RETRIES_EXCEEDED",
+      }
+    );
   }
 
-  /**
-   * Process with Pessimistic Locking
-   * Best for: High contention scenarios, write-heavy workloads
-   */
+  // ── Pessimistic Lock ─────────────────────────────────────────────────────
   async processWithPessimisticLock(studentId, amount, txHash, paymentData) {
     return await transactionManager.withPessimisticLock(
       async () => {
         return await transactionManager.withTransaction(async (session) => {
-          // Get student with lock held
           const student = await Student.findOne({ studentId }).session(session);
-          
-          if (!student) {
-            throw new Error(`Student not found: ${studentId}`);
-          }
+          if (!student) throw new Error(`Student not found: ${studentId}`);
 
-          // Calculate new totals
           const currentTotal = student.totalPaid || 0;
           const newTotal = currentTotal + amount;
           const newRemainingBalance = Math.max(0, student.feeAmount - newTotal);
           const isFeePaid = newTotal >= student.feeAmount;
 
-          // Update student
           student.totalPaid = newTotal;
           student.remainingBalance = newRemainingBalance;
           student.feePaid = isFeePaid;
@@ -397,16 +371,24 @@ class ConcurrentPaymentProcessor {
           student.lastPaymentHash = txHash;
           await student.save({ session });
 
-          // Create payment record
-          const payment = await Payment.create([{
-            studentId,
-            txHash,
-            amount,
-            feeAmount: student.feeAmount,
-            feeValidationStatus: isFeePaid ? 'valid' : (amount < student.feeAmount ? 'underpaid' : 'overpaid'),
-            status: 'confirmed',
-            ...paymentData,
-          }], { session });
+          const payment = await Payment.create(
+            [
+              {
+                studentId,
+                txHash,
+                amount,
+                feeAmount: student.feeAmount,
+                feeValidationStatus: isFeePaid
+                  ? "valid"
+                  : amount < student.feeAmount
+                  ? "underpaid"
+                  : "overpaid",
+                status: "confirmed",
+                ...paymentData,
+              },
+            ],
+            { session }
+          );
 
           return new PaymentProcessingResult(true, {
             student,
@@ -418,38 +400,31 @@ class ConcurrentPaymentProcessor {
         });
       },
       {
-        entityType: 'Student',
+        entityType: "Student",
         entityId: studentId,
         lockDurationMs: this.lockTimeoutMs,
       }
     );
   }
 
-  /**
-   * Process with Serializable Transaction
-   * Best for: Critical financial operations requiring strongest consistency
-   */
-  async processWithSerializableTransaction(studentId, amount, txHash, paymentData) {
+  // ── Serializable Transaction ─────────────────────────────────────────────
+  async processWithSerializableTransaction(
+    studentId,
+    amount,
+    txHash,
+    paymentData
+  ) {
     return await transactionManager.withTransaction(async (session) => {
-      // Use find with session for strong consistency
       const student = await Student.findOne({ studentId }).session(session);
-      
-      if (!student) {
-        throw new Error(`Student not found: ${studentId}`);
-      }
+      if (!student) throw new Error(`Student not found: ${studentId}`);
 
-      // Calculate new totals
       const currentTotal = student.totalPaid || 0;
       const newTotal = currentTotal + amount;
       const newRemainingBalance = Math.max(0, student.feeAmount - newTotal);
       const isFeePaid = newTotal >= student.feeAmount;
 
-      // Update with conditions
       const updateResult = await Student.updateOne(
-        {
-          studentId,
-          totalPaid: currentTotal, // Ensure no concurrent modification
-        },
+        { studentId, totalPaid: currentTotal },
         {
           $set: {
             totalPaid: newTotal,
@@ -461,21 +436,29 @@ class ConcurrentPaymentProcessor {
         },
         { session }
       );
+      if (updateResult.matchedCount === 0)
+        throw new Error(
+          "Concurrent modification detected - transaction aborted"
+        );
 
-      if (updateResult.matchedCount === 0) {
-        throw new Error('Concurrent modification detected - transaction aborted');
-      }
-
-      // Create payment record
-      const payment = await Payment.create([{
-        studentId,
-        txHash,
-        amount,
-        feeAmount: student.feeAmount,
-        feeValidationStatus: isFeePaid ? 'valid' : (amount < student.feeAmount ? 'underpaid' : 'overpaid'),
-        status: 'confirmed',
-        ...paymentData,
-      }], { session });
+      const payment = await Payment.create(
+        [
+          {
+            studentId,
+            txHash,
+            amount,
+            feeAmount: student.feeAmount,
+            feeValidationStatus: isFeePaid
+              ? "valid"
+              : amount < student.feeAmount
+              ? "underpaid"
+              : "overpaid",
+            status: "confirmed",
+            ...paymentData,
+          },
+        ],
+        { session }
+      );
 
       return new PaymentProcessingResult(true, {
         student,
@@ -487,67 +470,53 @@ class ConcurrentPaymentProcessor {
     });
   }
 
-  /**
-   * Check if error is retryable
-   */
+  // ── Retryable Error Check ────────────────────────────────────────────────
   isRetryableError(error) {
     const retryablePatterns = [
-      'TransientTransactionError',
-      'WriteConflict',
-      'LockTimeout',
-      'WriteConflict:',
+      "TransientTransactionError",
+      "WriteConflict",
+      "LockTimeout",
+      "WriteConflict:",
     ];
-    
     return (
-      error.hasErrorLabel?.('TransientTransactionError') ||
+      error.hasErrorLabel?.("TransientTransactionError") ||
       error.code === 112 ||
       error.code === 189 ||
-      retryablePatterns.some(pattern => error.message?.includes(pattern))
+      retryablePatterns.some((p) => error.message?.includes(p))
     );
   }
 
-  /**
-   * Process batch payments with concurrency control
-   */
+  // ── Batch Processing ─────────────────────────────────────────────────────
   async processBatch(payments, options = {}) {
     const results = [];
     const concurrencyLimit = options.concurrencyLimit || 10;
-    const maxRetries = options.maxRetries || 3;
 
-    // Process in controlled batches
     for (let i = 0; i < payments.length; i += concurrencyLimit) {
       const batch = payments.slice(i, i + concurrencyLimit);
-      
       const batchResults = await Promise.allSettled(
-        batch.map(payment => this.processPayment(payment, options))
+        batch.map((p) => this.processPayment(p, options))
       );
 
-      for (const result of batchResults) {
-        if (result.status === 'fulfilled') {
-          results.push({ success: true, data: result.value });
-        } else {
-          results.push({ success: false, error: result.reason.message });
-        }
+      for (const res of batchResults) {
+        if (res.status === "fulfilled")
+          results.push({ success: true, data: res.value });
+        else results.push({ success: false, error: res.reason.message });
       }
     }
 
     return {
       total: payments.length,
-      successful: results.filter(r => r.success).length,
-      failed: results.filter(r => !r.success).length,
+      successful: results.filter((r) => r.success).length,
+      failed: results.filter((r) => !r.success).length,
       results,
     };
   }
 
-  /**
-   * Get processor statistics
-   */
+  // ── Stats ───────────────────────────────────────────────────────────────
   getStats() {
     return {
       idempotencyCacheSize: this.idempotencyCache.cache.size,
-      rateLimiterStats: {
-        trackedKeys: this.rateLimiter.requests.size,
-      },
+      rateLimiterStats: { trackedKeys: this.rateLimiter.requests.size },
       transactionManagerStats: {
         activeTransactions: transactionManager.getActiveTransactionCount(),
       },
@@ -555,7 +524,7 @@ class ConcurrentPaymentProcessor {
   }
 }
 
-// ── Singleton Instance ──────────────────────────────────────────────────────────
+// ── Singleton Instance ─────────────────────────────────────────────────────
 const concurrentPaymentProcessor = new ConcurrentPaymentProcessor({
   idempotencyTtlMs: 60000,
   maxRequestsPerSecond: 100,
