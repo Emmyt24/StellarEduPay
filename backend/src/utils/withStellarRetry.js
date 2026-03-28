@@ -49,6 +49,83 @@ function isTransient(err) {
   return false;
 }
 
+/**
+ * Classify a Horizon/network error into a structured app error.
+ *
+ * Returns an Error with:
+ *   .code    — app-level error code
+ *   .status  — HTTP status to return to the client
+ *   .message — human-readable message
+ */
+function classifyHorizonError(err, context = "") {
+  const status =
+    err.response?.status ||
+    err.response?.statusCode ||
+    err.status ||
+    err.statusCode;
+
+  // Transaction / resource not found on Horizon
+  if (status === 404) {
+    const e = new Error(
+      context
+        ? `${context} not found on the Stellar network`
+        : "Transaction not found on the Stellar network",
+    );
+    e.code = "NOT_FOUND";
+    e.status = 404;
+    return e;
+  }
+
+  // Rate limited
+  if (status === 429) {
+    const e = new Error(
+      "Stellar Horizon is rate-limiting requests. Please retry shortly.",
+    );
+    e.code = "HORIZON_UNAVAILABLE";
+    e.status = 503;
+    return e;
+  }
+
+  // Horizon server error
+  if (status >= 500 && status < 600) {
+    const e = new Error(
+      "Stellar Horizon is temporarily unavailable. Please retry shortly.",
+    );
+    e.code = "HORIZON_UNAVAILABLE";
+    e.status = 503;
+    return e;
+  }
+
+  // Network-level errors (no HTTP response)
+  const NETWORK_CODES = [
+    "ECONNREFUSED",
+    "ECONNRESET",
+    "ETIMEDOUT",
+    "ENOTFOUND",
+    "EAI_AGAIN",
+  ];
+  if (
+    NETWORK_CODES.includes(err.code) ||
+    /timeout|network|socket hang up/i.test(err.message || "")
+  ) {
+    const e = new Error(
+      "Cannot reach the Stellar Horizon API. Please retry shortly.",
+    );
+    e.code = "HORIZON_UNAVAILABLE";
+    e.status = 503;
+    return e;
+  }
+
+  // Pass through already-classified app errors
+  if (err.code && err.status) return err;
+
+  // Unknown — treat as Stellar network error
+  const e = new Error(err.message || "Unexpected Stellar network error");
+  e.code = "STELLAR_NETWORK_ERROR";
+  e.status = 502;
+  return e;
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -101,4 +178,4 @@ async function withStellarRetry(fn, opts = {}) {
   throw lastErr;
 }
 
-module.exports = { withStellarRetry, isTransient };
+module.exports = { withStellarRetry, isTransient, classifyHorizonError };

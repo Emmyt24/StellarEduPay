@@ -224,6 +224,7 @@ async function enrichPaymentWithConversion(payment, targetCurrency = "USD") {
 
   return {
     ...payment,
+    stellarExplorerUrl: explorerUrl,
     explorerUrl,
     localCurrency: {
       amount: conversion.localAmount,

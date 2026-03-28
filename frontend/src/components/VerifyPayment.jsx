@@ -148,6 +148,16 @@ export default function VerifyPayment() {
                   }}
                 >
                   {result.hash}
+                  {result.stellarExplorerUrl && (
+                    <a
+                      href={result.stellarExplorerUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ display: 'inline-block', marginLeft: '0.5rem', fontFamily: 'sans-serif' }}
+                    >
+                      View on Explorer
+                    </a>
+                  )}
                 </td>
               </tr>
             </tbody>

@@ -220,6 +220,15 @@ async function recordPayment(data) {
 /**
  * Verify a single transaction hash against a specific school wallet.
  * Throws structured errors for all failure cases.
+ *
+ * Error codes:
+ *   NOT_FOUND (404)           — txHash does not exist on Horizon
+ *   HORIZON_UNAVAILABLE (503) — Horizon unreachable / rate-limited / 5xx
+ *   TX_FAILED (400)           — transaction found but failed on-chain
+ *   MISSING_MEMO (400)        — no memo on the transaction
+ *   INVALID_DESTINATION (400) — no payment op to the school wallet
+ *   UNSUPPORTED_ASSET (400)   — asset not accepted
+ *   AMOUNT_TOO_LOW/HIGH (400) — outside configured limits
  */
 async function verifyTransaction(txHash, walletAddress) {
   const tx = await withStellarRetry(
@@ -554,10 +563,26 @@ async function finalizeConfirmedPayments(schoolId) {
  * If walletAddress is provided, only payments to that wallet are included.
  */
 async function parseIncomingTransaction(txHash, walletAddress = null) {
-  const tx = await server.transactions().transaction(txHash).call();
+  let tx;
+  try {
+    tx = await withStellarRetry(
+      () => server.transactions().transaction(txHash).call(),
+      { label: "parseIncomingTransaction" },
+    );
+  } catch (err) {
+    throw classifyHorizonError(err, `Transaction ${txHash}`);
+  }
+
   const memo = tx.memo ? tx.memo.trim() : null;
 
-  const ops = await tx.operations();
+  let ops;
+  try {
+    ops = await withStellarRetry(() => tx.operations(), {
+      label: "parseIncomingTransaction.operations",
+    });
+  } catch (err) {
+    throw classifyHorizonError(err, "Transaction operations");
+  }
   const payments = ops.records
     .filter(
       (op) =>

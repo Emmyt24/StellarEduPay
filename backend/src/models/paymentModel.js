@@ -54,19 +54,24 @@ const paymentSchema = new mongoose.Schema(
 softDelete(paymentSchema);
 
 // Indexes
+// Note: txHash single-field index is declared inline (unique: true, index: true) above.
+// The compound below covers payment-history queries: filter by school+student, sort by date desc.
 paymentSchema.index({ schoolId: 1, confirmedAt: -1 });
 paymentSchema.index({ schoolId: 1, studentId: 1, confirmedAt: -1 });
 paymentSchema.index({ schoolId: 1, feeValidationStatus: 1 });
 paymentSchema.index({ schoolId: 1, isSuspicious: 1 });
 paymentSchema.index({ schoolId: 1, confirmationStatus: 1 });
 paymentSchema.index({ schoolId: 1, status: 1, confirmedAt: -1 });
-paymentSchema.index({ txHash: 1 }, { unique: true });
 
 paymentSchema.virtual('explorerUrl').get(function () {
   const hash = this.transactionHash || this.txHash;
   if (!hash) return null;
   const network = process.env.STELLAR_NETWORK === 'mainnet' ? 'public' : 'testnet';
   return `https://stellar.expert/explorer/${network}/tx/${hash}`;
+});
+
+paymentSchema.virtual('stellarExplorerUrl').get(function () {
+  return this.explorerUrl;
 });
 
 paymentSchema.pre('save', async function (next) {
