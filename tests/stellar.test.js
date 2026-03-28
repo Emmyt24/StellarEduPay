@@ -54,6 +54,7 @@ jest.mock('../backend/src/config/stellarConfig', () => ({
 jest.mock('../backend/src/models/paymentModel', () => ({
   findOne: jest.fn(),
   create: jest.fn().mockResolvedValue({}),
+  exists: jest.fn().mockResolvedValue(false),
 }));
 
 jest.mock('../backend/src/models/paymentIntentModel', () => ({
@@ -259,9 +260,38 @@ describe('parseIncomingTransaction', () => {
 
 // ─── syncPayments ─────────────────────────────────────────────────────────────
 
+// Shared mock transaction factory for sync tests
+function makeSyncTx(amount, memo = 'STU001') {
+  return {
+    hash: `tx-${amount}`,
+    successful: true,
+    memo,
+    created_at: new Date().toISOString(),
+    ledger_attr: 90, // below CONFIRMATION_THRESHOLD of 2 from sequence 100 → confirmed
+    operations: jest.fn().mockResolvedValue({
+      records: [{
+        type: 'payment',
+        to: 'GTEST123',
+        from: 'GSENDER',
+        amount: String(amount),
+        asset_type: 'native',
+      }],
+    }),
+  };
+}
+
+const stellarConfig = require('../backend/src/config/stellarConfig');
+
 describe('syncPaymentsForSchool', () => {
+  const school = { schoolId: 'SCH001', stellarAddress: 'GTEST123' };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    Payment.findOne.mockResolvedValue(null); // tx not yet recorded
+    Payment.exists.mockResolvedValue(false);
+  });
+
   test('resolves without error when no transactions exist', async () => {
-    const school = { schoolId: 'SCH001', stellarAddress: 'GTEST123' };
     await expect(syncPaymentsForSchool(school)).resolves.toBeUndefined();
   });
 

@@ -180,11 +180,7 @@ async function recordPayment(data) {
 
 /**
  * Verify a single transaction hash against a specific school wallet.
- * Throws structured errors for all failure cases so the controller can handle them uniformly.
- *
- * @param {string} txHash        - 64-char hex transaction hash
- * @param {string} walletAddress - the school's Stellar wallet address
- * @returns {object|null} Verified transaction details, or null if no valid payment found
+ * Throws structured errors for all failure cases.
  */
 async function verifyTransaction(txHash, walletAddress) {
   const tx = await withStellarRetry(
@@ -377,8 +373,6 @@ async function syncPaymentsForSchool(school) {
       if (!page || !page.records.length) break;
     }
   }
-
-  await SystemConfig.set(`lastSyncAt:${schoolId}`, new Date().toISOString());
 }
 
 /**
@@ -445,6 +439,7 @@ async function parseIncomingTransaction(txHash, walletAddress = null) {
 
 module.exports = {
   syncPaymentsForSchool,
+  finalizeConfirmedPayments,
   verifyTransaction,
   parseIncomingTransaction,
   validatePaymentAgainstFee,
