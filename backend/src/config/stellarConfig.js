@@ -13,6 +13,13 @@ const networkPassphrase = config.IS_TESTNET
 
 const SCHOOL_WALLET = config.SCHOOL_WALLET_ADDRESS;
 
+if (!SCHOOL_WALLET || !StellarSdk.StrKey.isValidEd25519PublicKey(SCHOOL_WALLET)) {
+  throw new Error(
+    `[Config] SCHOOL_WALLET_ADDRESS is ${SCHOOL_WALLET ? 'invalid' : 'missing'}. ` +
+    'Provide a valid Stellar public key (starts with G).'
+  );
+}
+
 // All known assets
 const ALL_ASSETS = {
   XLM: {
