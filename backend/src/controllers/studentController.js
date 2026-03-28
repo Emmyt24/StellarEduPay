@@ -59,6 +59,13 @@ async function registerStudent(req, res, next) {
     }
     res.status(201).json(response);
   } catch (err) {
+    if (err.name === 'ValidationError') {
+      const message = Object.values(err.errors).map(val => val.message).join(', ');
+      const e = new Error(message);
+      e.code = 'VALIDATION_ERROR';
+      e.status = 400;
+      return next(e);
+    }
     if (err.code === 11000) {
       const e = new Error('Student ID already exists in this school');
       e.code = 'DUPLICATE_STUDENT';
@@ -126,6 +133,13 @@ async function updateStudent(req, res, next) {
     del(KEYS.student(studentId));
     res.json(student);
   } catch (err) {
+    if (err.name === 'ValidationError') {
+      const message = Object.values(err.errors).map(val => val.message).join(', ');
+      const e = new Error(message);
+      e.code = 'VALIDATION_ERROR';
+      e.status = 400;
+      return next(e);
+    }
     next(err);
   }
 }
