@@ -1,7 +1,7 @@
-'use strict';
+"use strict";
 
-const express = require('express');
-const router  = express.Router();
+const express = require("express");
+const router = express.Router();
 
 const {
   getPaymentInstructions,
@@ -29,7 +29,8 @@ const {
   generateReceipt,
   getQueueJobStatus,
   streamPaymentEvents,
-} = require('../controllers/paymentController');
+  getPaymentSummary,
+} = require("../controllers/paymentController");
 
 const {
   validateStudentIdParam,
@@ -37,47 +38,69 @@ const {
   validateCreatePaymentIntent,
   validateVerifyPayment,
   validateSubmitTransaction,
-} = require('../middleware/validate');
-const { resolveSchool }    = require('../middleware/schoolContext');
-const idempotency          = require('../middleware/idempotency');
-const { requireAdminAuth } = require('../middleware/auth');
-const { strictLimiter }    = require('../middleware/rateLimiter');
+} = require("../middleware/validate");
+const { resolveSchool } = require("../middleware/schoolContext");
+const idempotency = require("../middleware/idempotency");
+const { requireAdminAuth } = require("../middleware/auth");
+const { strictLimiter } = require("../middleware/rateLimiter");
 
 // No school context required
-router.get('/verify/:txHash', validateTxHashParam, verifyTransactionHash);
+router.get("/verify/:txHash", validateTxHashParam, verifyTransactionHash);
 
 // Validation runs BEFORE resolveSchool so missing-school requests still get
 // proper 400 validation errors when the body itself is invalid.
-router.post('/intent', validateCreatePaymentIntent, idempotency, resolveSchool, createPaymentIntent);
-router.post('/submit', validateSubmitTransaction, resolveSchool, submitTransaction);
+router.post(
+  "/intent",
+  validateCreatePaymentIntent,
+  idempotency,
+  resolveSchool,
+  createPaymentIntent,
+);
+router.post(
+  "/submit",
+  validateSubmitTransaction,
+  resolveSchool,
+  submitTransaction,
+);
 
 // All remaining routes require school context
 router.use(resolveSchool);
 
-router.get('/',                              getAllPayments);
-router.get('/accepted-assets',               getAcceptedAssets);
-router.get('/limits',                        getPaymentLimitsEndpoint);
-router.get('/sync/status',                   getSyncStatus);
-router.get('/events',                        streamPaymentEvents);
-router.get('/overpayments',                  getOverpayments);
-router.get('/suspicious',                    getSuspiciousPayments);
-router.get('/pending',                       getPendingPayments);
-router.get('/retry-queue',                   getRetryQueue);
-router.get('/rates',                         getExchangeRates);
-router.get('/dlq',                           getDeadLetterJobs);
+router.get("/", getAllPayments);
+router.get("/summary", getPaymentSummary);
+router.get("/accepted-assets", getAcceptedAssets);
+router.get("/limits", getPaymentLimitsEndpoint);
+router.get("/sync/status", getSyncStatus);
+router.get("/events", streamPaymentEvents);
+router.get("/overpayments", getOverpayments);
+router.get("/suspicious", getSuspiciousPayments);
+router.get("/pending", getPendingPayments);
+router.get("/retry-queue", getRetryQueue);
+router.get("/rates", getExchangeRates);
+router.get("/dlq", getDeadLetterJobs);
 
-router.post('/verify',    strictLimiter, idempotency, validateVerifyPayment, verifyPayment);
-router.post('/sync',      strictLimiter, requireAdminAuth, syncAllPayments);
-router.post('/finalize',  requireAdminAuth, finalizePayments);
-router.post('/dlq/:id/retry', retryDeadLetterJob);
+router.post(
+  "/verify",
+  strictLimiter,
+  idempotency,
+  validateVerifyPayment,
+  verifyPayment,
+);
+router.post("/sync", strictLimiter, requireAdminAuth, syncAllPayments);
+router.post("/finalize", requireAdminAuth, finalizePayments);
+router.post("/dlq/:id/retry", retryDeadLetterJob);
 
-router.get('/balance/:studentId',      validateStudentIdParam, getStudentBalance);
-router.get('/instructions/:studentId', validateStudentIdParam, getPaymentInstructions);
-router.get('/receipt/:txHash',         generateReceipt);
-router.get('/queue/:txHash',           getQueueJobStatus);
-router.get('/:studentId',              validateStudentIdParam, getStudentPayments);
+router.get("/balance/:studentId", validateStudentIdParam, getStudentBalance);
+router.get(
+  "/instructions/:studentId",
+  validateStudentIdParam,
+  getPaymentInstructions,
+);
+router.get("/receipt/:txHash", generateReceipt);
+router.get("/queue/:txHash", getQueueJobStatus);
+router.get("/:studentId", validateStudentIdParam, getStudentPayments);
 
-router.post('/:paymentId/lock',   lockPaymentForUpdate);
-router.post('/:paymentId/unlock', unlockPayment);
+router.post("/:paymentId/lock", lockPaymentForUpdate);
+router.post("/:paymentId/unlock", unlockPayment);
 
 module.exports = router;

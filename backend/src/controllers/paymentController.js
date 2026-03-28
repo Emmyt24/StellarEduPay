@@ -10,7 +10,7 @@ const Payment = require("../models/paymentModel");
 const PaymentIntent = require("../models/paymentIntentModel");
 const Student = require("../models/studentModel");
 const PendingVerification = require("../models/pendingVerificationModel");
-const StellarSdk = require('@stellar/stellar-sdk');
+const StellarSdk = require("@stellar/stellar-sdk");
 
 const {
   verifyTransaction,
@@ -20,11 +20,21 @@ const {
   validatePaymentWithDynamicFee,
 } = require("../services/stellarService");
 const { queueForRetry } = require("../services/retryService");
-const { enqueueTransaction, getJobStatus } = require('../queue/transactionQueue');
-const { SCHOOL_WALLET, ACCEPTED_ASSETS, server } = require("../config/stellarConfig");
-const { validateTransactionHash } = require('../utils/hashValidator');
+const {
+  enqueueTransaction,
+  getJobStatus,
+} = require("../queue/transactionQueue");
+const {
+  SCHOOL_WALLET,
+  ACCEPTED_ASSETS,
+  server,
+} = require("../config/stellarConfig");
+const { validateTransactionHash } = require("../utils/hashValidator");
 const { getPaymentLimits } = require("../utils/paymentLimits");
-const { convertToLocalCurrency, enrichPaymentWithConversion } = require("../services/currencyConversionService");
+const {
+  convertToLocalCurrency,
+  enrichPaymentWithConversion,
+} = require("../services/currencyConversionService");
 const { withStellarRetry } = require("../utils/withStellarRetry");
 
 // Permanent error codes that should NOT be retried
@@ -52,7 +62,7 @@ function wrapStellarError(err) {
   }
   return err;
 }
-const { encryptMemo, isEncryptionEnabled } = require('../utils/memoEncryption');
+const { encryptMemo, isEncryptionEnabled } = require("../utils/memoEncryption");
 
 // ====================== PAYMENT INSTRUCTIONS ======================
 async function getPaymentInstructions(req, res, next) {
@@ -78,20 +88,22 @@ async function getPaymentInstructions(req, res, next) {
       walletAddress: req.school.stellarAddress,
       memo: encryptMemo(req.params.studentId),
       memoEncrypted: isEncryptionEnabled(),
-      acceptedAssets: Object.values(ACCEPTED_ASSETS).map(a => ({
+      acceptedAssets: Object.values(ACCEPTED_ASSETS).map((a) => ({
         code: a.code,
         type: a.type,
         displayName: a.displayName,
       })),
       paymentLimits: { min: limits.min, max: limits.max },
       feeAmount: student ? student.feeAmount : null,
-      feeLocalEquivalent: feeConversion?.available ? {
-        amount: feeConversion.localAmount,
-        currency: feeConversion.currency,
-        rate: feeConversion.rate,
-        rateTimestamp: feeConversion.rateTimestamp,
-      } : null,
-      note: 'Include the payment intent memo exactly when sending payment.',
+      feeLocalEquivalent: feeConversion?.available
+        ? {
+            amount: feeConversion.localAmount,
+            currency: feeConversion.currency,
+            rate: feeConversion.rate,
+            rateTimestamp: feeConversion.rateTimestamp,
+          }
+        : null,
+      note: "Include the payment intent memo exactly when sending payment.",
     });
   } catch (err) {
     next(err);
@@ -119,9 +131,10 @@ async function createPaymentIntent(req, res, next) {
       });
     }
 
-    const rawMemo = crypto.randomBytes(4).toString('hex').toUpperCase();
+    const rawMemo = crypto.randomBytes(4).toString("hex").toUpperCase();
     const memo = encryptMemo(rawMemo);
-    const ttlMs = parseInt(process.env.PAYMENT_INTENT_TTL_MS, 10) || 24 * 60 * 60 * 1000;
+    const ttlMs =
+      parseInt(process.env.PAYMENT_INTENT_TTL_MS, 10) || 24 * 60 * 60 * 1000;
     const expiresAt = new Date(Date.now() + ttlMs);
 
     const intent = await PaymentIntent.create({
@@ -149,8 +162,11 @@ async function submitTransaction(req, res, next) {
       return res.status(400).json({ error: "Missing xdr parameter" });
     }
 
-    const tx = new StellarSdk.Transaction(xdr, require('../config/stellarConfig').networkPassphrase);
-    const transactionHash = tx.hash().toString('hex');
+    const tx = new StellarSdk.Transaction(
+      xdr,
+      require("../config/stellarConfig").networkPassphrase,
+    );
+    const transactionHash = tx.hash().toString("hex");
 
     const hashValidation = validateTransactionHash(transactionHash);
     if (!hashValidation.valid) {
@@ -163,20 +179,31 @@ async function submitTransaction(req, res, next) {
     const memo = tx.memo.value ? tx.memo.value.toString() : null;
 
     if (!memo) {
-      return res.status(400).json({ error: "Transaction must include the student ID as a memo" });
+      return res
+        .status(400)
+        .json({ error: "Transaction must include the student ID as a memo" });
     }
 
-    let paymentRecord = await Payment.findOne({ memo, status: "PENDING" }).sort({ createdAt: -1 });
+    let paymentRecord = await Payment.findOne({ memo, status: "PENDING" }).sort(
+      { createdAt: -1 },
+    );
     if (!paymentRecord) {
       const studentObj = await Student.findOne({ studentId: memo });
       if (!studentObj) {
-        return res.status(404).json({ error: "Associated student not found in the database. Cannot process transaction." });
+        return res.status(404).json({
+          error:
+            "Associated student not found in the database. Cannot process transaction.",
+        });
       }
-      paymentRecord = new Payment({ studentId: studentObj._id, memo, amount: 0 });
+      paymentRecord = new Payment({
+        studentId: studentObj._id,
+        memo,
+        amount: 0,
+      });
     }
 
     paymentRecord.transactionHash = normalizedHash;
-    paymentRecord.status = 'SUBMITTED';
+    paymentRecord.status = "SUBMITTED";
     paymentRecord.submittedAt = new Date();
     await paymentRecord.save();
 
@@ -220,14 +247,15 @@ async function submitTransaction(req, res, next) {
     // (Amount should be extracted from operations, but verifyTransaction does that better)
     await paymentRecord.save();
 
-    const stellarExplorerUrl = getExplorerUrl(normalizedHash);
+    const submitNetwork =
+      process.env.STELLAR_NETWORK === "mainnet" ? "public" : "testnet";
     res.json({
       verified: true,
       hash: normalizedHash,
       ledger: txResponse.ledger,
-      status: 'SUCCESS',
-      stellarExplorerUrl,
-      explorerUrl: stellarExplorerUrl,
+      status: "SUCCESS",
+      status: "SUCCESS",
+      explorerUrl: `https://stellar.expert/explorer/${submitNetwork}/tx/${transactionHash}`,
     });
   } catch (err) {
     next(err);
@@ -265,19 +293,24 @@ async function verifyPayment(req, res, next) {
 
     const existing = await Payment.findOne({ txHash: normalizedHash });
     if (existing) {
-      const err = new Error('Transaction ' + normalizedHash + ' has already been processed');
-      err.code = 'DUPLICATE_TX';
+      const err = new Error(
+        "Transaction " + normalizedHash + " has already been processed",
+      );
+      err.code = "DUPLICATE_TX";
       return next(err);
     }
 
     let result;
     try {
-      result = await verifyTransaction(normalizedHash, req.school.stellarAddress);
+      result = await verifyTransaction(
+        normalizedHash,
+        req.school.stellarAddress,
+      );
     } catch (stellarErr) {
       if (PERMANENT_FAIL_CODES.includes(stellarErr.code)) {
         await Payment.create({
           schoolId,
-          studentId: 'unknown',
+          studentId: "unknown",
           txHash: normalizedHash,
           amount: 0,
           status: "FAILED",
@@ -286,18 +319,24 @@ async function verifyPayment(req, res, next) {
         return next(stellarErr);
       }
 
-      await queueForRetry(normalizedHash, req.body.studentId || null, stellarErr.message, schoolId);
+      await queueForRetry(
+        normalizedHash,
+        req.body.studentId || null,
+        stellarErr.message,
+        schoolId,
+      );
       return res.status(202).json({
-        message: 'Stellar network is temporarily unavailable. Your transaction has been queued and will be verified automatically.',
+        message:
+          "Stellar network is temporarily unavailable. Your transaction has been queued and will be verified automatically.",
         txHash: normalizedHash,
-        status: 'queued_for_retry',
-        stellarExplorerUrl: getExplorerUrl(normalizedHash),
+        status: "queued_for_retry",
       });
     }
 
     if (!result) {
       return res.status(404).json({
-        error: "Transaction found but contains no valid payment to this school wallet",
+        error:
+          "Transaction found but contains no valid payment to this school wallet",
         code: "NOT_FOUND",
       });
     }
@@ -305,13 +344,17 @@ async function verifyPayment(req, res, next) {
     const studentStrId = result.studentId || result.memo;
     const studentObj = await Student.findOne({ studentId: studentStrId });
     if (!studentObj) {
-      return res.status(404).json({ error: "Associated student not found. Cannot record transaction." });
+      return res.status(404).json({
+        error: "Associated student not found. Cannot record transaction.",
+      });
     }
 
     const intent = await PaymentIntent.findOne({ memo: result.memo, schoolId });
     if (intent && intent.expiresAt && intent.expiresAt < new Date()) {
       await PaymentIntent.findByIdAndUpdate(intent._id, { status: "expired" });
-      const err = new Error("Payment intent has expired. Please request new payment instructions.");
+      const err = new Error(
+        "Payment intent has expired. Please request new payment instructions.",
+      );
       err.code = "INTENT_EXPIRED";
       err.status = 410;
       return next(err);
@@ -348,8 +391,12 @@ async function verifyPayment(req, res, next) {
       verifiedAt: now,
     });
 
-    const targetCurrency = req.school.localCurrency || 'USD';
-    const conversion = await convertToLocalCurrency(result.amount, result.assetCode || 'XLM', targetCurrency);
+    const targetCurrency = req.school.localCurrency || "USD";
+    const conversion = await convertToLocalCurrency(
+      result.amount,
+      result.assetCode || "XLM",
+      targetCurrency,
+    );
 
     const stellarExplorerUrl = getExplorerUrl(result.hash);
     res.json({
@@ -396,7 +443,9 @@ async function verifyTransactionHash(req, res, next) {
     });
   } catch (err) {
     if (err.response && err.response.status === 404) {
-      return res.status(404).json({ error: 'Transaction not found', code: 'NOT_FOUND' });
+      return res
+        .status(404)
+        .json({ error: "Transaction not found", code: "NOT_FOUND" });
     }
     next(wrapStellarError(err));
   }
@@ -413,9 +462,12 @@ async function syncAllPayments(req, res, next) {
 
 async function getSyncStatus(req, res, next) {
   try {
-    const SystemConfig = require('../models/systemConfigModel');
+    const SystemConfig = require("../models/systemConfigModel");
     const lastSyncAt = await SystemConfig.get(`lastSyncAt:${req.schoolId}`);
-    res.json({ lastSyncAt: lastSyncAt || null, status: lastSyncAt ? 'synced' : 'never_synced' });
+    res.json({
+      lastSyncAt: lastSyncAt || null,
+      status: lastSyncAt ? "synced" : "never_synced",
+    });
   } catch (err) {
     next(err);
   }
@@ -432,23 +484,26 @@ async function finalizePayments(req, res, next) {
 
 async function getStudentPayments(req, res, next) {
   try {
-    const targetCurrency = req.school.localCurrency || 'USD';
-    const payments = await Payment
-      .find({ schoolId: req.schoolId, studentId: req.params.studentId })
+    const targetCurrency = req.school.localCurrency || "USD";
+    const network =
+      process.env.STELLAR_NETWORK === "mainnet" ? "public" : "testnet";
+
+    const payments = await Payment.find({
+      schoolId: req.schoolId,
+      studentId: req.params.studentId,
+    })
       .sort({ confirmedAt: -1 })
       .lean();
 
     const enriched = await Promise.all(
       payments.map(async (p) => {
         const hash = p.transactionHash || p.txHash;
-        const stellarExplorerUrl = getExplorerUrl(hash);
+        const explorerUrl = hash
+          ? `https://stellar.expert/explorer/${network}/tx/${hash}`
+          : null;
         const converted = await enrichPaymentWithConversion(p, targetCurrency);
-        return {
-          ...converted,
-          stellarExplorerUrl,
-          explorerUrl: stellarExplorerUrl,
-        };
-      })
+        return { ...converted, explorerUrl };
+      }),
     );
     res.json(enriched);
   } catch (err) {
@@ -680,18 +735,34 @@ async function getExchangeRates(req, res, next) {
 async function getAllPayments(req, res, next) {
   try {
     const { schoolId } = req;
-    const { page = 1, limit = 50, startDate, endDate, minAmount, maxAmount, status, studentId, isSuspicious } = req.query;
+    const {
+      page = 1,
+      limit = 50,
+      startDate,
+      endDate,
+      minAmount,
+      maxAmount,
+      status,
+      studentId,
+      isSuspicious,
+    } = req.query;
 
     const filter = { schoolId };
 
     if (startDate || endDate) {
       filter.confirmedAt = {};
       if (startDate) {
-        if (isNaN(Date.parse(startDate))) return res.status(400).json({ error: "Invalid startDate", code: "VALIDATION_ERROR" });
+        if (isNaN(Date.parse(startDate)))
+          return res
+            .status(400)
+            .json({ error: "Invalid startDate", code: "VALIDATION_ERROR" });
         filter.confirmedAt.$gte = new Date(startDate);
       }
       if (endDate) {
-        if (isNaN(Date.parse(endDate))) return res.status(400).json({ error: "Invalid endDate", code: "VALIDATION_ERROR" });
+        if (isNaN(Date.parse(endDate)))
+          return res
+            .status(400)
+            .json({ error: "Invalid endDate", code: "VALIDATION_ERROR" });
         const end = new Date(endDate);
         end.setUTCHours(23, 59, 59, 999);
         filter.confirmedAt.$lte = end;
@@ -702,26 +773,37 @@ async function getAllPayments(req, res, next) {
       filter.amount = {};
       if (minAmount) {
         const min = Number(minAmount);
-        if (!Number.isFinite(min)) return res.status(400).json({ error: "Invalid minAmount", code: "VALIDATION_ERROR" });
+        if (!Number.isFinite(min))
+          return res
+            .status(400)
+            .json({ error: "Invalid minAmount", code: "VALIDATION_ERROR" });
         filter.amount.$gte = min;
       }
       if (maxAmount) {
         const max = Number(maxAmount);
-        if (!Number.isFinite(max)) return res.status(400).json({ error: "Invalid maxAmount", code: "VALIDATION_ERROR" });
+        if (!Number.isFinite(max))
+          return res
+            .status(400)
+            .json({ error: "Invalid maxAmount", code: "VALIDATION_ERROR" });
         filter.amount.$lte = max;
       }
     }
 
     if (status) filter.status = status.toUpperCase();
     if (studentId) filter.studentId = studentId;
-    if (isSuspicious !== undefined) filter.isSuspicious = isSuspicious === 'true';
+    if (isSuspicious !== undefined)
+      filter.isSuspicious = isSuspicious === "true";
 
     const pageNum = Math.max(1, parseInt(page, 10));
     const pageSize = Math.min(200, Math.max(1, parseInt(limit, 10)));
     const skip = (pageNum - 1) * pageSize;
 
     const [payments, total] = await Promise.all([
-      Payment.find(filter).sort({ confirmedAt: -1 }).skip(skip).limit(pageSize).lean(),
+      Payment.find(filter)
+        .sort({ confirmedAt: -1 })
+        .skip(skip)
+        .limit(pageSize)
+        .lean(),
       Payment.countDocuments(filter),
     ]);
 
@@ -740,7 +822,7 @@ async function getAllPayments(req, res, next) {
         totalPages: Math.ceil(total / pageSize),
         hasNext: pageNum < Math.ceil(total / pageSize),
         hasPrev: pageNum > 1,
-      }
+      },
     });
   } catch (err) {
     next(err);
@@ -749,7 +831,7 @@ async function getAllPayments(req, res, next) {
 
 // ====================== OTHER FUNCTIONS (kept as-is, just cleaned) ======================
 
-const Receipt = require('../models/receiptModel');
+const Receipt = require("../models/receiptModel");
 
 async function generateReceipt(req, res, next) {
   try {
@@ -759,21 +841,28 @@ async function generateReceipt(req, res, next) {
     const existing = await Receipt.findOne({ txHash, schoolId });
     if (existing) return res.json(existing);
 
-    const payment = await Payment.findOne({ txHash, schoolId, status: 'SUCCESS' });
+    const payment = await Payment.findOne({
+      txHash,
+      schoolId,
+      status: "SUCCESS",
+    });
     if (!payment) {
-      return res.status(404).json({ error: 'Confirmed payment not found for this transaction hash', code: 'NOT_FOUND' });
+      return res.status(404).json({
+        error: "Confirmed payment not found for this transaction hash",
+        code: "NOT_FOUND",
+      });
     }
 
     const receipt = await Receipt.create({
-      txHash:              payment.txHash,
-      studentId:           payment.studentId,
-      schoolId:            payment.schoolId,
-      amount:              payment.amount,
-      assetCode:           payment.assetCode || 'XLM',
-      feeAmount:           payment.feeAmount,
+      txHash: payment.txHash,
+      studentId: payment.studentId,
+      schoolId: payment.schoolId,
+      amount: payment.amount,
+      assetCode: payment.assetCode || "XLM",
+      feeAmount: payment.feeAmount,
       feeValidationStatus: payment.feeValidationStatus,
-      memo:                payment.memo,
-      confirmedAt:         payment.confirmedAt,
+      memo: payment.memo,
+      confirmedAt: payment.confirmedAt,
     });
 
     res.status(201).json(receipt);
@@ -794,7 +883,11 @@ async function lockPaymentForUpdate(req, res, next) {
       {
         _id: paymentId,
         schoolId,
-        $or: [{ lockedUntil: null }, { lockedUntil: { $exists: false } }, { lockedUntil: { $lte: new Date() } }],
+        $or: [
+          { lockedUntil: null },
+          { lockedUntil: { $exists: false } },
+          { lockedUntil: { $lte: new Date() } },
+        ],
       },
       { $set: { lockedUntil: lockDeadline, lockHolder: lockId } },
       { new: true },
@@ -802,11 +895,23 @@ async function lockPaymentForUpdate(req, res, next) {
 
     if (!payment) {
       const exists = await Payment.findOne({ _id: paymentId, schoolId });
-      if (!exists) return res.status(404).json({ error: "Payment not found", code: "NOT_FOUND" });
-      return res.status(409).json({ error: "Payment is currently locked by another process", code: "PAYMENT_LOCKED", lockedUntil: exists.lockedUntil });
+      if (!exists)
+        return res
+          .status(404)
+          .json({ error: "Payment not found", code: "NOT_FOUND" });
+      return res.status(409).json({
+        error: "Payment is currently locked by another process",
+        code: "PAYMENT_LOCKED",
+        lockedUntil: exists.lockedUntil,
+      });
     }
 
-    res.json({ locked: true, lockId, lockedUntil: lockDeadline, paymentId: payment._id });
+    res.json({
+      locked: true,
+      lockId,
+      lockedUntil: lockDeadline,
+      paymentId: payment._id,
+    });
   } catch (err) {
     next(err);
   }
@@ -818,7 +923,10 @@ async function unlockPayment(req, res, next) {
     const { paymentId } = req.params;
     const { lockId } = req.body;
 
-    if (!lockId) return res.status(400).json({ error: "lockId is required", code: "VALIDATION_ERROR" });
+    if (!lockId)
+      return res
+        .status(400)
+        .json({ error: "lockId is required", code: "VALIDATION_ERROR" });
 
     const payment = await Payment.findOneAndUpdate(
       { _id: paymentId, schoolId, lockHolder: lockId },
@@ -826,7 +934,11 @@ async function unlockPayment(req, res, next) {
       { new: true },
     );
 
-    if (!payment) return res.status(404).json({ error: "Payment not found or lockId does not match", code: "NOT_FOUND" });
+    if (!payment)
+      return res.status(404).json({
+        error: "Payment not found or lockId does not match",
+        code: "NOT_FOUND",
+      });
 
     res.json({ unlocked: true, paymentId: payment._id });
   } catch (err) {
@@ -836,10 +948,17 @@ async function unlockPayment(req, res, next) {
 
 async function getDeadLetterJobs(req, res, next) {
   try {
-    const { getDeadLetterQueue } = require('../config/retryQueueSetup');
+    const { getDeadLetterQueue } = require("../config/retryQueueSetup");
     const queue = getDeadLetterQueue();
     const jobs = queue ? await queue.getFailed(0, 99) : [];
-    res.json({ jobs: jobs.map(j => ({ id: j.id, name: j.name, data: j.data, failedReason: j.failedReason })) });
+    res.json({
+      jobs: jobs.map((j) => ({
+        id: j.id,
+        name: j.name,
+        data: j.data,
+        failedReason: j.failedReason,
+      })),
+    });
   } catch (err) {
     next(err);
   }
@@ -847,14 +966,21 @@ async function getDeadLetterJobs(req, res, next) {
 
 async function retryDeadLetterJob(req, res, next) {
   try {
-    const { getDeadLetterQueue } = require('../config/retryQueueSetup');
+    const { getDeadLetterQueue } = require("../config/retryQueueSetup");
     const { jobId } = req.params;
     const queue = getDeadLetterQueue();
-    if (!queue) return res.status(503).json({ error: 'Retry queue unavailable', code: 'SERVICE_UNAVAILABLE' });
+    if (!queue)
+      return res.status(503).json({
+        error: "Retry queue unavailable",
+        code: "SERVICE_UNAVAILABLE",
+      });
     const job = await queue.getJob(jobId);
-    if (!job) return res.status(404).json({ error: 'Job not found', code: 'NOT_FOUND' });
+    if (!job)
+      return res
+        .status(404)
+        .json({ error: "Job not found", code: "NOT_FOUND" });
     await job.retry();
-    res.json({ message: 'Job queued for retry', jobId });
+    res.json({ message: "Job queued for retry", jobId });
   } catch (err) {
     next(err);
   }
@@ -862,7 +988,7 @@ async function retryDeadLetterJob(req, res, next) {
 
 async function getQueueJobStatus(req, res, next) {
   try {
-    const { getRetryQueueStatus } = require('../config/retryQueueSetup');
+    const { getRetryQueueStatus } = require("../config/retryQueueSetup");
     const status = await getRetryQueueStatus();
     res.json(status || { available: false });
   } catch (err) {
@@ -870,19 +996,60 @@ async function getQueueJobStatus(req, res, next) {
   }
 }
 
+// GET /api/payments/summary
+async function getPaymentSummary(req, res, next) {
+  try {
+    const { schoolId } = req;
+
+    const [studentStats, xlmStats] = await Promise.all([
+      Student.aggregate([
+        { $match: { schoolId, deletedAt: null } },
+        {
+          $group: {
+            _id: null,
+            totalStudents: { $sum: 1 },
+            paidCount: { $sum: { $cond: ["$feePaid", 1, 0] } },
+            unpaidCount: { $sum: { $cond: ["$feePaid", 0, 1] } },
+          },
+        },
+      ]),
+      Payment.aggregate([
+        { $match: { schoolId, status: "SUCCESS", deletedAt: null } },
+        { $group: { _id: null, totalXlmCollected: { $sum: "$amount" } } },
+      ]),
+    ]);
+
+    const s = studentStats[0] || {
+      totalStudents: 0,
+      paidCount: 0,
+      unpaidCount: 0,
+    };
+    const x = xlmStats[0] || { totalXlmCollected: 0 };
+
+    res.json({
+      totalStudents: s.totalStudents,
+      paidCount: s.paidCount,
+      unpaidCount: s.unpaidCount,
+      totalXlmCollected: parseFloat(x.totalXlmCollected.toFixed(7)),
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 function streamPaymentEvents(req, res) {
-  const { addClient, removeClient } = require('../services/sseService');
+  const { addClient, removeClient } = require("../services/sseService");
   const schoolId = req.schoolId;
 
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
   res.flushHeaders();
 
-  const ping = setInterval(() => res.write(': ping\n\n'), 30000);
+  const ping = setInterval(() => res.write(": ping\n\n"), 30000);
   addClient(schoolId, res);
 
-  req.on('close', () => {
+  req.on("close", () => {
     clearInterval(ping);
     removeClient(schoolId, res);
   });
@@ -898,7 +1065,7 @@ module.exports = {
   getSyncStatus,
   finalizePayments,
   getStudentPayments,
-  getAllPayments,                    // ← Updated with proper pagination
+  getAllPayments, // ← Updated with proper pagination
   getAcceptedAssets,
   getPaymentLimitsEndpoint,
   getOverpayments,
@@ -914,4 +1081,5 @@ module.exports = {
   generateReceipt,
   getQueueJobStatus,
   streamPaymentEvents,
+  getPaymentSummary,
 };
