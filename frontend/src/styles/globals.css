@@ -1,0 +1,184 @@
+/* CSS Reset and Normalize */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --primary-color: #2196F3;
+  --primary-hover: #1976D2;
+  --secondary-color: #2e7d32;
+  --bg-color: #ffffff;
+  --card-bg: #f5f5f5;
+  --text-color: #333333;
+  --text-muted: #666666;
+  --text-light: #999999;
+  --border-color: #dddddd;
+  --error-color: #d32f2f;
+  --success-bg: #e8f5e9;
+  
+  --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --border-radius: 8px;
+  --border-radius-sm: 4px;
+}
+
+body {
+  font-family: var(--font-family);
+  color: var(--text-color);
+  background-color: var(--bg-color);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Typography */
+h1, h2, h3 {
+  margin-bottom: 1rem;
+  font-weight: 600;
+}
+
+p {
+  margin-bottom: 0.5rem;
+}
+
+strong {
+  font-weight: 600;
+}
+
+/* Layout Utilities */
+.container {
+  max-width: 600px;
+  margin: 4rem auto;
+  padding: 0 1rem;
+}
+
+.container-sm {
+  max-width: 480px;
+  margin: 2rem auto;
+  padding: 0 1rem;
+}
+
+.text-center {
+  text-align: center;
+}
+
+.flex-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
+/* Spacing Utilities */
+.mt-1 { margin-top: 1rem; }
+.mt-1-5 { margin-top: 1.5rem; }
+.mb-0-25 { margin-bottom: 0.25rem; }
+.mb-0-5 { margin-bottom: 0.5rem; }
+.mb-0-75 { margin-bottom: 0.75rem; }
+.mb-1 { margin-bottom: 1rem; }
+.my-0-4 { margin: 0.4rem 0; }
+.ml-0-5 { margin-left: 0.5rem; }
+.mr-0-5 { margin-right: 0.5rem; }
+
+/* Components */
+.btn-primary {
+  padding: 0.75rem 2rem;
+  font-size: 1rem;
+  font-weight: 500;
+  background-color: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: var(--border-radius-sm);
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background-color: var(--primary-hover);
+}
+
+.btn-primary:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.btn-copy {
+  padding: 0.5rem 0.75rem;
+  background-color: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: var(--border-radius-sm);
+  cursor: pointer;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.input-field {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-sm);
+  font-size: 1rem;
+}
+
+.input-label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+}
+
+.card {
+  background-color: var(--card-bg);
+  padding: 1rem;
+  border-radius: var(--border-radius);
+  margin-top: 1.5rem;
+}
+
+.code-block {
+  font-family: 'Courier New', Courier, monospace;
+  word-break: break-all;
+  flex: 1;
+  padding: 0.5rem;
+  background: white;
+  border-radius: var(--border-radius-sm);
+  border: 1px solid var(--border-color);
+}
+
+.alert-error {
+  color: var(--error-color);
+  margin-top: 0.5rem;
+  font-weight: 500;
+}
+
+/* Text Styles */
+.text-success {
+  color: var(--secondary-color);
+  font-weight: 500;
+}
+
+.text-muted {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.italic {
+  font-style: italic;
+}
+
+.badge-success {
+  background-color: var(--success-bg);
+  padding: 0.5rem;
+  border-radius: var(--border-radius-sm);
+  margin-top: 0.75rem;
+}
+
+.list-unstyled {
+  list-style: none;
+  margin: 0.25rem 0 0 1rem;
+  padding: 0;
+}
+
+hr {
+  border: 0;
+  border-top: 1px solid var(--border-color);
+  margin: 1rem 0;
+}

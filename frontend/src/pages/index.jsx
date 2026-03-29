@@ -3,7 +3,7 @@ import Link from 'next/link';
 
 export default function Home() {
   return (
-    <div style={{ maxWidth: 600, margin: '4rem auto', fontFamily: 'sans-serif', textAlign: 'center' }}>
+    <div className="container text-center">
       <Head>
         <title>StellarEduPay</title>
         <meta name="description" content="Transparent, instant school fee payments on the Stellar blockchain. Eliminate manual reconciliation and get instant proof of payment." />
@@ -12,7 +12,7 @@ export default function Home() {
       <h1>StellarEduPay</h1>
       <p>Transparent school fee payments on the Stellar blockchain.</p>
       <Link href="/pay-fees">
-        <button style={{ padding: '0.75rem 2rem', fontSize: '1rem', cursor: 'pointer' }}>
+        <button className="btn-primary">
           Pay School Fees
         </button>
       </Link>
