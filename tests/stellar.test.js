@@ -295,6 +295,144 @@ describe('syncPaymentsForSchool', () => {
     await expect(syncPaymentsForSchool(school)).resolves.toBeUndefined();
   });
 
+  test('skips transaction with unmatched memo (no matching student)', async () => {
+    const school = { schoolId: 'SCH001', stellarAddress: 'GCICZOP346CKADPWOZ6JAQ7OCGH44UELNS3GSDXFOTSZRW6OYZZ6KSY7B' };
+    
+    // Transaction with memo that doesn't match any student
+    const unmatchedTx = makeSyncTx(100, 'UNKNOWN_STUDENT_999');
+    
+    // Override stellarConfig mock to return our unmatched transaction
+    const stellarConfig = require('../backend/src/config/stellarConfig');
+    const origTransactions = stellarConfig.server.transactions;
+    stellarConfig.server.transactions = () => ({
+      forAccount: () => ({
+        order: () => ({ 
+          limit: () => ({ 
+            call: async () => ({ 
+              records: [unmatchedTx], 
+              next: async () => ({ records: [] }) 
+            }) 
+          }) 
+        }),
+      }),
+    });
+
+    // Mock PaymentIntent to return null (no matching intent for this memo)
+    const PaymentIntent = require('../backend/src/models/paymentIntentModel');
+    PaymentIntent.findOne.mockResolvedValue(null);
+
+    // Track if Payment.create was called
+    const createSpy = Payment.create;
+    
+    // Track if Student.findOneAndUpdate was called
+    const studentUpdateSpy = Student.findOneAndUpdate;
+
+    await syncPaymentsForSchool(school);
+
+    // Verify no payment was created
+    expect(createSpy).not.toHaveBeenCalled();
+    
+    // Verify no student was updated
+    expect(studentUpdateSpy).not.toHaveBeenCalled();
+
+    // Restore
+    stellarConfig.server.transactions = origTransactions;
+  });
+
+  test('skips transaction with no memo field', async () => {
+    const school = { schoolId: 'SCH001', stellarAddress: 'GCICZOP346CKADPWOZ6JAQ7OCGH44UELNS3GSDXFOTSZRW6OYZZ6KSY7B' };
+    
+    // Transaction with no memo
+    const noMemoTx = {
+      hash: 'tx-no-memo',
+      successful: true,
+      memo: undefined, // No memo field
+      created_at: new Date().toISOString(),
+      ledger_attr: 90,
+      operations: jest.fn().mockResolvedValue({
+        records: [{
+          type: 'payment',
+          to: 'GCICZOP346CKADPWOZ6JAQ7OCGH44UELNS3GSDXFOTSZRW6OYZZ6KSY7B',
+          from: 'GSENDER',
+          amount: '100.0',
+          asset_type: 'native',
+        }],
+      }),
+    };
+    
+    // Override stellarConfig mock to return transaction without memo
+    const stellarConfig = require('../backend/src/config/stellarConfig');
+    const origTransactions = stellarConfig.server.transactions;
+    stellarConfig.server.transactions = () => ({
+      forAccount: () => ({
+        order: () => ({ 
+          limit: () => ({ 
+            call: async () => ({ 
+              records: [noMemoTx], 
+              next: async () => ({ records: [] }) 
+            }) 
+          }) 
+        }),
+      }),
+    });
+
+    // Track if Payment.create was called
+    const createSpy = Payment.create;
+    
+    // Track if Student.findOneAndUpdate was called
+    const studentUpdateSpy = Student.findOneAndUpdate;
+
+    // Should not throw error
+    await expect(syncPaymentsForSchool(school)).resolves.toBeDefined();
+
+    // Verify no payment was created
+    expect(createSpy).not.toHaveBeenCalled();
+    
+    // Verify no student was updated
+    expect(studentUpdateSpy).not.toHaveBeenCalled();
+
+    // Restore
+    stellarConfig.server.transactions = origTransactions;
+  });
+
+  test('skips transaction with empty string memo', async () => {
+    const school = { schoolId: 'SCH001', stellarAddress: 'GCICZOP346CKADPWOZ6JAQ7OCGH44UELNS3GSDXFOTSZRW6OYZZ6KSY7B' };
+    
+    // Transaction with empty memo
+    const emptyMemoTx = makeSyncTx(100, '   '); // Whitespace-only memo
+    
+    // Override stellarConfig mock
+    const stellarConfig = require('../backend/src/config/stellarConfig');
+    const origTransactions = stellarConfig.server.transactions;
+    stellarConfig.server.transactions = () => ({
+      forAccount: () => ({
+        order: () => ({ 
+          limit: () => ({ 
+            call: async () => ({ 
+              records: [emptyMemoTx], 
+              next: async () => ({ records: [] }) 
+            }) 
+          }) 
+        }),
+      }),
+    });
+
+    // Track calls
+    const createSpy = Payment.create;
+    const studentUpdateSpy = Student.findOneAndUpdate;
+
+    await syncPaymentsForSchool(school);
+
+    // Verify no payment was created
+    expect(createSpy).not.toHaveBeenCalled();
+    
+    // Verify no student was updated
+    expect(studentUpdateSpy).not.toHaveBeenCalled();
+
+    // Restore
+    stellarConfig.server.transactions = origTransactions;
+  });
+
   test('stops pagination when a known txHash is encountered', async () => {
     const school = { schoolId: 'SCH001', stellarAddress: 'GCICZOP346CKADPWOZ6JAQ7OCGH44UELNS3GSDXFOTSZRW6OYZZ6KSY7B' };
 

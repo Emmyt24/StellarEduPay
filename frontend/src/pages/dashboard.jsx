@@ -65,7 +65,7 @@ export default function Dashboard() {
     setSummaryLoading(true);
     return getPaymentSummary()
       .then(({ data }) => setSummary(data))
-      .catch(() => {})
+      .catch(() => { })
       .finally(() => setSummaryLoading(false));
   }, []);
 
@@ -173,6 +173,16 @@ export default function Dashboard() {
       cls: "xlm",
     },
   ];
+
+  // Build category cards from summary data
+  const categoryCards = summary?.categoryBreakdown
+    ? summary.categoryBreakdown.map(cat => ({
+      label: cat.category,
+      value: `${cat.totalCollected.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 7 })} XLM`,
+      count: cat.paymentCount,
+      cls: "category",
+    }))
+    : [];
 
   return (
     <>

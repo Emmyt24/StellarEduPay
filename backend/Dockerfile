@@ -1,5 +1,8 @@
 FROM node:18-alpine
 
+# Install wget for health checks
+RUN apk add --no-cache wget
+
 # Create a non-root user to run the app
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
