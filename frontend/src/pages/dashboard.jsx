@@ -50,9 +50,9 @@ export default function Dashboard() {
     setError(null);
     return getStudents(p, PAGE_SIZE)
       .then(({ data }) => {
-        setStudents(data.students);
-        setTotal(data.total);
-        setPages(data.pages);
+        setStudents(data.students || []);
+        setTotal(data.total || 0);
+        setPages(data.pages || 1);
       })
       .catch((err) => {
         setError("Failed to load students. Please try again.");
@@ -88,7 +88,7 @@ export default function Dashboard() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return students.filter((s) => {
+    return (students || []).filter((s) => {
       const matchesSearch =
         !q ||
         (s.name || "").toLowerCase().includes(q) ||
@@ -123,6 +123,34 @@ export default function Dashboard() {
     } finally {
       setFormLoading(false);
     }
+  }
+
+  function handleExportCSV() {
+    if (filtered.length === 0) return;
+    
+    const headers = ["Student ID", "Name", "Class", "Fee Amount", "Status", "Tx Hash", "Payment Date"];
+    const rows = filtered.map(s => [
+      `"${s.studentId}"`,
+      `"${s.name}"`,
+      `"${s.class}"`,
+      s.feeAmount,
+      s.status || "Unpaid",
+      `"${s.lastPaymentHash || ''}"`,
+      s.lastPaymentAt ? new Date(s.lastPaymentAt).toLocaleDateString() : ""
+    ]);
+
+    const csvContent = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const date = new Date().toISOString().split('T')[0];
+    
+    link.setAttribute("href", url);
+    link.setAttribute("download", `stellaredupay-${date}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   }
 
   function handleSyncComplete(data) {
@@ -186,12 +214,22 @@ export default function Dashboard() {
         .btn-primary { background: #3b82f6; color: #fff; padding: 0.65rem 1.25rem; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; transition: opacity 0.2s; }
         .btn-primary:hover { opacity: 0.9; }
         .btn-ghost { background: transparent; color: #64748b; padding: 0.65rem 1.25rem; border: 1px solid #e2e8f0; border-radius: 8px; cursor: pointer; }
+        .btn-success { background: #10b981; color: #fff; padding: 0.65rem 1.25rem; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; transition: opacity 0.2s; }
+        .btn-success:hover { opacity: 0.9; }
       `}</style>
 
       <div>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1.5rem" }}>
           <h1 style={{ margin: 0, fontSize: "1.85rem" }}>School Management</h1>
           <div style={{ display: "flex", gap: "0.75rem" }}>
+            <button 
+              onClick={handleExportCSV}
+              className="btn-success"
+              style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
+              disabled={filtered.length === 0}
+            >
+              Export CSV
+            </button>
             <button 
               onClick={() => setShowForm(!showForm)}
               style={{ padding: "0.6rem 1.2rem", background: "#3b82f6", color: "white", border: "none", borderRadius: 8, fontWeight: 600, cursor: "pointer" }}
