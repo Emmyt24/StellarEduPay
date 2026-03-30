@@ -89,24 +89,26 @@ export default function PaymentForm() {
           </p>
 
           <p className="my-0-4">
-            <strong>Required Fee:</strong>{" "}
-            {instructions.feeAmount != null
-              ? `${instructions.feeAmount} XLM`
-              : `${student.feeAmount} XLM`}
-            {local && (
+            <strong>Required Fee:</strong>{' '}
+            {instructions.feeAmount != null ? `${instructions.feeAmount} XLM` : `${student.feeAmount} XLM`}
+            {fiatConversion?.usd && (
               <span className="ml-0-5 text-success">
-                ≈ {local.amount.toFixed(2)} {local.currency}
+                (~${fiatConversion.usd.toFixed(2)} USD)
               </span>
             )}
           </p>
 
-          {local && rateTime && (
-            <p className="mb-0-5 text-muted">
-              Rate as of {rateTime} · 1 XLM = {local.rate.toFixed(4)} {local.currency}
+          {fiatConversion?.usd && (
+            <p className="mb-0-5 text-muted" style={{ fontSize: '0.85rem' }}>
+              <em>Approximate rate: 1 XLM ≈ ${fiatConversion.rate.toFixed(4)} USD</em>
+              <br />
+              <small>Exchange rates are indicative and may vary. Actual value depends on market conditions.</small>
             </p>
           )}
-          {!local && instructions.feeAmount != null && (
-            <p className="mb-0-5 text-muted">Local currency rate unavailable</p>
+          {!fiatConversion?.usd && !fiatConversion?.loading && (
+            <p className="mb-0-5 text-muted">
+              <small>Fiat conversion rate unavailable</small>
+            </p>
           )}
 
           <p>

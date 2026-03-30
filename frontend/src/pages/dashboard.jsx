@@ -45,23 +45,19 @@ export default function Dashboard() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
 
-  const fetchStudents = useCallback(
-    (p = page) => {
-      setLoading(true);
-      setError(null);
-      return getStudents(p, PAGE_SIZE)
-        .then(({ data }) => {
-          setLastSyncAt(data.lastSyncAt);
-          setError(null);
-        })
-        .catch((err) => {
-          setError("Failed to load sync status. Please try again.");
-          console.error(err);
-        })
-        .finally(() => setLoading(false));
-    },
-    [page],
-  ); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    setLoading(true);
+    getSyncStatus()
+      .then(({ data }) => {
+        setLastSyncAt(data.lastSyncAt);
+        setError(null);
+      })
+      .catch((err) => {
+        setError("Failed to load sync status. Please try again.");
+        console.error(err);
+      })
+      .finally(() => setLoading(false));
+  }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchSummary = useCallback(() => {
     setSummaryLoading(true);
@@ -71,89 +67,13 @@ export default function Dashboard() {
       .finally(() => setSummaryLoading(false));
   }, []);
 
-  const fetchSyncStatus = useCallback(() => {
-    setLoading(true);
-    return getSyncStatus()
-      .then(({ data }) => {
-        setLastSyncAt(data.lastSyncAt);
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
-
-  // Initial load
   useEffect(() => {
-    fetchSyncStatus();
-    fetchSummary();
-    fetchStudents(1);
-  }, [fetchSyncStatus, fetchSummary, fetchStudents]);
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return (students || []).filter((s) => {
-      const matchesSearch =
-        !q ||
-        (s.name || "").toLowerCase().includes(q) ||
-        (s.studentId || s.student_id || "").toLowerCase().includes(q);
-
-      const status = (s.status || "unpaid").toLowerCase();
-      const matchesStatus =
-        statusFilter === "all" ||
-        (statusFilter === "paid" && status === "paid") ||
-        (statusFilter === "unpaid" && status === "unpaid") ||
-        (statusFilter === "partial" && status === "partial");
-
-      return matchesSearch && matchesStatus;
-    });
-  }, [students, search, statusFilter]);
-
-  async function handleRegister(e) {
-    e.preventDefault();
-    setFormLoading(true);
-    setFormError(null);
-
-    try {
-      await registerStudent(formData);
-      setSyncMessage("Student registered successfully!");
-      setShowForm(false);
-      setFormData({ studentId: "", name: "", class: "", feeAmount: "" });
-      fetchSummary();
-      fetchStudents(1);
-      setTimeout(() => setSyncMessage(null), 3000);
-    } catch (err) {
-      setFormError(err.response?.data?.error || "Registration failed. Please check inputs.");
-    } finally {
-      setFormLoading(false);
-    }
-  }
-
-  function handleExportCSV() {
-    if (filtered.length === 0) return;
-    
-    const headers = ["Student ID", "Name", "Class", "Fee Amount", "Status", "Tx Hash", "Payment Date"];
-    const rows = filtered.map(s => [
-      `"${s.studentId}"`,
-      `"${s.name}"`,
-      `"${s.class}"`,
-      s.feeAmount,
-      s.status || "Unpaid",
-      `"${s.lastPaymentHash || ''}"`,
-      s.lastPaymentAt ? new Date(s.lastPaymentAt).toLocaleDateString() : ""
-    ]);
-
-    const csvContent = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    const date = new Date().toISOString().split('T')[0];
-    
-    link.setAttribute("href", url);
-    link.setAttribute("download", `stellaredupay-${date}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  }
+    setSummaryLoading(true);
+    getPaymentSummary()
+      .then(({ data }) => setSummary(data))
+      .catch(() => { })
+      .finally(() => setSummaryLoading(false));
+  }, []);
 
   function handleSyncComplete(data) {
     setLastSyncAt(new Date().toISOString());
@@ -172,6 +92,7 @@ export default function Dashboard() {
       value: summary
         ? `${(summary.totalXlmCollected || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 7 })} XLM`
         : null,
+      subValue: fiatConversion?.usd ? `~$${fiatConversion.usd.toLocaleString()} USD` : null,
       cls: "xlm",
     },
   ];
@@ -190,34 +111,16 @@ export default function Dashboard() {
     <>
       <style>{`
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-        .summary-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
-        .summary-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
-        .summary-card .label { font-size: 0.75rem; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
-        .summary-card .value { font-size: 1.75rem; font-weight: 800; color: #0f172a; line-height: 1.2; }
-        .summary-card.paid .value { color: #10b981; }
-        .summary-card.unpaid .value { color: #f59e0b; }
-        .summary-card.xlm .value { color: #3b82f6; }
-        .summary-skeleton { height: 1.75rem; width: 60%; background: #f1f5f9; border-radius: 6px; animation: pulse 1.5s infinite; }
-        
-        .student-table { width: 100%; border-collapse: separate; border-spacing: 0; background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; }
-        .student-table th { background: #f8fafc; text-align: left; padding: 1rem; font-size: 0.85rem; font-weight: 600; color: #64748b; border-bottom: 1px solid #e2e8f0; }
-        .student-table td { padding: 1rem; font-size: 0.9rem; border-bottom: 1px solid #f1f5f9; }
-        .student-table tr:last-child td { border-bottom: none; }
-        .badge { display: inline-block; padding: 0.25rem 0.6rem; border-radius: 20px; font-size: 0.75rem; font-weight: 600; }
-        .badge.paid { background: #d1fae5; color: #065f46; }
-        .badge.unpaid { background: #fee2e2; color: #991b1b; }
-        .badge.partial { background: #fef3c7; color: #92400e; }
-
-        .form-overlay { padding: 2rem; background: #fff; border: 1px solid #e2e8f0; border-radius: 16px; margin-bottom: 2rem; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
-        .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.5rem; }
-        .form-group label { display: block; font-size: 0.85rem; color: #475569; font-weight: 500; margin-bottom: 0.5rem; }
-        .form-control { width: 100%; padding: 0.65rem 0.75rem; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 0.9rem; transition: border 0.2s; }
-        .form-control:focus { outline: none; border-color: #3b82f6; ring: 2px solid #3b82f622; }
-        .btn-primary { background: #3b82f6; color: #fff; padding: 0.65rem 1.25rem; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; transition: opacity 0.2s; }
-        .btn-primary:hover { opacity: 0.9; }
-        .btn-ghost { background: transparent; color: #64748b; padding: 0.65rem 1.25rem; border: 1px solid #e2e8f0; border-radius: 8px; cursor: pointer; }
-        .btn-success { background: #10b981; color: #fff; padding: 0.65rem 1.25rem; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; transition: opacity 0.2s; }
-        .btn-success:hover { opacity: 0.9; }
+        .summary-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1.75rem; }
+        .summary-card { background: #fff; border: 1px solid #e0e0e0; border-radius: 10px; padding: 1rem 1.25rem; }
+        .summary-card .label { font-size: 0.78rem; color: #888; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.35rem; }
+        .summary-card .value { font-size: 1.6rem; font-weight: 700; color: #1a1a1a; line-height: 1; }
+        .summary-card .sub-value { font-size: 0.9rem; font-weight: 400; color: #2e7d32; margin-top: 0.25rem; }
+        .summary-card.paid .value { color: #2e7d32; }
+        .summary-card.unpaid .value { color: #e65100; }
+        .summary-card.xlm .value { color: #1565c0; }
+        .summary-card.category .value { color: #6a1b9a; }
+        .summary-skeleton { height: 1.6rem; width: 60%; background: #e0e0e0; border-radius: 4px; animation: pulse 1.5s infinite; }
       `}</style>
 
       <div>
@@ -281,14 +184,17 @@ export default function Dashboard() {
         )}
 
         {/* Summary cards */}
-        <div className="summary-cards">
-          {cards.map(({ label, value, cls }) => (
+        <div className="summary-cards" aria-label="Payment summary statistics">
+          {cards.map(({ label, value, subValue, cls }) => (
             <div key={label} className={`summary-card ${cls}`}>
               <div className="label">{label}</div>
               {summaryLoading || value == null ? (
                 <div className="summary-skeleton" />
               ) : (
-                <div className="value">{value}</div>
+                <>
+                  <div className="value">{value}</div>
+                  {subValue && <div className="sub-value">{subValue}</div>}
+                </>
               )}
             </div>
           ))}
@@ -383,13 +289,3 @@ export default function Dashboard() {
     </>
   );
 }
-
-const pageBtnStyle = {
-  padding: "0.4rem 0.9rem",
-  fontSize: "0.88rem",
-  background: "#1a1a2e",
-  color: "#fff",
-  border: "none",
-  borderRadius: 6,
-  cursor: "pointer",
-};

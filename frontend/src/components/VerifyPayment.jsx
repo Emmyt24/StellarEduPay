@@ -1,5 +1,6 @@
-import { useState, useRef } from "react";
-import { verifyPayment } from "../services/api";
+import { useState, useRef } from 'react';
+import { verifyPayment } from '../services/api';
+import { useFiatConversion } from '../hooks/useFiatConversion';
 
 export default function VerifyPayment() {
   const [txHash, setTxHash] = useState("");
@@ -7,6 +8,9 @@ export default function VerifyPayment() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const errorRef = useRef(null);
+
+  const xlmAmount = result?.assetCode === 'XLM' ? parseFloat(result?.amount) : null;
+  const fiatConversion = useFiatConversion(xlmAmount);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -108,7 +112,12 @@ export default function VerifyPayment() {
               <tr>
                 <td style={labelCell}>Amount</td>
                 <td style={valueCell}>
-                  {result.amount} {result.assetCode || "XLM"}
+                  {result.amount} {result.assetCode || 'XLM'}
+                  {fiatConversion?.usd && (
+                    <span style={{ marginLeft: '0.5rem', color: '#2e7d32', fontSize: '0.85rem' }}>
+                      (~${fiatConversion.usd.toFixed(2)} USD)
+                    </span>
+                  )}
                 </td>
               </tr>
               <tr>
@@ -170,6 +179,12 @@ export default function VerifyPayment() {
               </tr>
             </tbody>
           </table>
+
+          {fiatConversion?.usd && (
+            <p style={{ marginTop: '0.75rem', fontSize: '0.75rem', color: '#888', fontStyle: 'italic' }}>
+              Exchange rates are approximate and may vary based on market conditions.
+            </p>
+          )}
         </div>
       )}
     </div>
