@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import SyncButton from "../components/SyncButton";
-import { getSyncStatus, getPaymentSummary, getStudents } from "../services/api";
+import { getSyncStatus, getPaymentSummary, getStudents, registerStudent } from "../services/api";
 
 const PAGE_SIZE = 10;
 
@@ -30,6 +30,17 @@ export default function Dashboard() {
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(1);
 
+  // Form state
+  const [showForm, setShowForm] = useState(false);
+  const [formLoading, setFormLoading] = useState(false);
+  const [formData, setFormData] = useState({
+    studentId: "",
+    name: "",
+    class: "",
+    feeAmount: "",
+  });
+  const [formError, setFormError] = useState(null);
+
   // Search & filter state
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -48,10 +59,9 @@ export default function Dashboard() {
       .finally(() => setLoading(false));
   }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Initial load: sync status + first page of students
-  useEffect(() => {
+  const fetchSummary = useCallback(() => {
     setSummaryLoading(true);
-    getPaymentSummary()
+    return getPaymentSummary()
       .then(({ data }) => setSummary(data))
       .catch(() => { })
       .finally(() => setSummaryLoading(false));
@@ -69,34 +79,18 @@ export default function Dashboard() {
     setLastSyncAt(new Date().toISOString());
     setSyncMessage(data?.message || "Sync complete.");
     setTimeout(() => setSyncMessage(null), 3000);
-    getPaymentSummary()
-      .then(({ data: s }) => setSummary(s))
-      .catch(() => { });
-  }
-
-  function handleRetry() {
-    setLoading(true);
-    setError(null);
-    getSyncStatus()
-      .then(({ data }) => {
-        setLastSyncAt(data.lastSyncAt);
-        setError(null);
-      })
-      .catch((err) => {
-        setError("Failed to load sync status. Please try again.");
-        console.error(err);
-      })
-      .finally(() => setLoading(false));
+    fetchSummary();
+    fetchStudents(1);
   }
 
   const cards = [
-    { label: "Total Students", value: summary?.totalStudents, cls: "" },
-    { label: "Paid", value: summary?.paidCount, cls: "paid" },
-    { label: "Unpaid", value: summary?.unpaidCount, cls: "unpaid" },
+    { label: "Total Students", value: summary?.totalStudents || summary?.total, cls: "" },
+    { label: "Full Paid", value: summary?.paidCount || summary?.counts?.paid, cls: "paid" },
+    { label: "Pending/Partial", value: (summary?.unpaidCount || 0) + (summary?.counts?.partial || 0), cls: "unpaid" },
     {
       label: "XLM Collected",
       value: summary
-        ? `${summary.totalXlmCollected.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 7 })} XLM`
+        ? `${(summary.totalXlmCollected || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 7 })} XLM`
         : null,
       subValue: fiatConversion?.usd ? `~$${fiatConversion.usd.toLocaleString()} USD` : null,
       cls: "xlm",
@@ -139,33 +133,19 @@ export default function Dashboard() {
           }}
         >
           <h1 style={{ margin: 0 }}>Admin Dashboard</h1>
-          <SyncButton
-            onSyncComplete={handleSyncComplete}
-            lastSyncTime={lastSyncAt}
-          />
+          <SyncButton onSyncComplete={handleSyncComplete} lastSyncTime={lastSyncAt} />
         </div>
 
-        {/* Toast */}
+        {/* Sync status alert */}
         {syncMessage && (
-          <p
-            style={{
-              color: "#2e7d32",
-              background: "#f1f8e9",
-              padding: "0.6rem 1rem",
-              borderRadius: 6,
-              fontSize: "0.9rem",
-            }}
-            role="status"
-          >
+          <div style={{ background: "#ecfdf5", border: "1px solid #10b98122", padding: "0.75rem 1.25rem", borderRadius: 8, color: "#065f46", marginBottom: "1.5rem", fontSize: "0.95rem", fontWeight: 500 }}>
             ✓ {syncMessage}
-          </p>
+          </div>
         )}
 
         {/* Sync status */}
         {loading ? (
-          <p style={{ fontSize: "0.85rem", color: "#888" }}>
-            Loading sync status…
-          </p>
+          <p style={{ fontSize: "0.85rem", color: "#888" }}>Loading sync status…</p>
         ) : error ? (
           <div
             style={{
@@ -176,10 +156,7 @@ export default function Dashboard() {
               marginBottom: "1rem",
             }}
           >
-            <p
-              style={{ color: "#c62828", margin: "0 0 0.75rem 0" }}
-              role="alert"
-            >
+            <p style={{ color: "#c62828", margin: "0 0 0.75rem 0" }} role="alert">
               {error}
             </p>
             <button
@@ -197,15 +174,12 @@ export default function Dashboard() {
               Retry
             </button>
           </div>
-        ) : (
-          <p
-            style={{
-              fontSize: "0.85rem",
-              color: "#888",
-              marginBottom: "1.5rem",
-            }}
-          >
-            Last synced: <strong>{timeAgo(lastSyncAt)}</strong>
+        )}
+
+        {/* Sync Status Info */}
+        {!loading && (
+          <p style={{ fontSize: "0.85rem", color: "#64748b", marginBottom: "1.5rem" }}>
+            Last data refresh: <strong>{timeAgo(lastSyncAt)}</strong>
           </p>
         )}
 
@@ -215,7 +189,7 @@ export default function Dashboard() {
             <div key={label} className={`summary-card ${cls}`}>
               <div className="label">{label}</div>
               {summaryLoading || value == null ? (
-                <div className="summary-skeleton" aria-hidden="true" />
+                <div className="summary-skeleton" />
               ) : (
                 <>
                   <div className="value">{value}</div>
@@ -226,29 +200,89 @@ export default function Dashboard() {
           ))}
         </div>
 
-        {/* Category breakdown */}
-        {categoryCards.length > 0 && (
+        {/* Filters and Search */}
+        <div style={{ display: "flex", gap: "1rem", marginBottom: "1.5rem" }}>
+          <input 
+            placeholder="Search students..."
+            className="form-control"
+            style={{ maxWidth: "340px" }}
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+          <select 
+            className="form-control" 
+            style={{ maxWidth: "180px" }}
+            value={statusFilter}
+            onChange={e => setStatusFilter(e.target.value)}
+          >
+            <option value="all">All Status</option>
+            <option value="paid">Paid</option>
+            <option value="partial">Partial</option>
+            <option value="unpaid">Unpaid</option>
+          </select>
+        </div>
+
+        {/* Student Table */}
+        {studentsLoading ? (
+          <p>Loading students...</p>
+        ) : (
           <>
-            <h2 style={{ margin: '1.5rem 0 1rem 0', fontSize: '1.2rem', color: '#1a1a1a' }}>
-              Fee Categories
-            </h2>
-            <div className="summary-cards" aria-label="Fee category breakdown">
-              {categoryCards.map(({ label, value, count, cls }) => (
-                <div key={label} className={`summary-card ${cls}`}>
-                  <div className="label">{label}</div>
-                  {summaryLoading || value == null ? (
-                    <div className="summary-skeleton" aria-hidden="true" />
-                  ) : (
-                    <>
-                      <div className="value">{value}</div>
-                      <div style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.25rem' }}>
-                        {count} payment{count !== 1 ? 's' : ''}
-                      </div>
-                    </>
-                  )}
+            <table className="student-table">
+              <thead>
+                <tr>
+                  <th>Student ID</th>
+                  <th>Name</th>
+                  <th>Class</th>
+                  <th>Total Fee</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map(s => (
+                  <tr key={s.studentId}>
+                    <td>{s.studentId}</td>
+                    <td style={{ fontWeight: 500 }}>{s.name}</td>
+                    <td>{s.class}</td>
+                    <td>{s.feeAmount} XLM</td>
+                    <td>
+                      <span className={`badge ${s.status?.toLowerCase() || 'unpaid'}`}>
+                        {s.status || 'Unpaid'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+                {filtered.length === 0 && (
+                  <tr>
+                    <td colSpan="5" style={{ textAlign: "center", padding: "2rem", color: "#94a3b8" }}>
+                      No students found matching filters.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+
+            {/* Pagination Controls */}
+            {pages > 1 && (
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.5rem", marginTop: "1rem" }}>
+                <button 
+                  disabled={page === 1} 
+                  onClick={() => setPage(page - 1)}
+                  style={{ ...pageBtnStyle, opacity: page === 1 ? 0.5 : 1 }}
+                >
+                  Prev
+                </button>
+                <div style={{ display: "flex", alignItems: "center", padding: "0 1rem", fontSize: "0.9rem" }}>
+                  Page {page} of {pages}
                 </div>
-              ))}
-            </div>
+                <button 
+                  disabled={page === pages} 
+                  onClick={() => setPage(page + 1)}
+                  style={{ ...pageBtnStyle, opacity: page === pages ? 0.5 : 1 }}
+                >
+                  Next
+                </button>
+              </div>
+            )}
           </>
         )}
       </div>

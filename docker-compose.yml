@@ -26,6 +26,7 @@ services:
       args:
         # NEXT_PUBLIC_* vars are inlined at build time by Next.js — pass as build arg
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:5000/api}
+        NEXT_PUBLIC_STELLAR_NETWORK: ${STELLAR_NETWORK:-testnet}
     ports:
       - "3000:3000"
     depends_on:
