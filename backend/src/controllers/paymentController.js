@@ -352,13 +352,47 @@ async function verifyPayment(req, res, next) {
 
     const normalizedHash = hashValidation.normalized;
 
+    // Check if payment already exists (idempotency)
     const existing = await Payment.findOne({ txHash: normalizedHash });
     if (existing) {
-      const err = new Error(
-        "Transaction " + normalizedHash + " has already been processed",
+      // Return cached result instead of error
+      const targetCurrency = req.school.localCurrency || "USD";
+      const conversion = await convertToLocalCurrency(
+        existing.amount,
+        existing.assetCode || "XLM",
+        targetCurrency,
       );
-      err.code = "DUPLICATE_TX";
-      return next(err);
+
+      const stellarExplorerUrl = getExplorerUrl(existing.txHash);
+      
+      return res.json({
+        verified: true,
+        cached: true,
+        hash: existing.txHash,
+        stellarExplorerUrl,
+        explorerUrl: stellarExplorerUrl,
+        memo: existing.memo,
+        studentId: existing.studentId,
+        amount: existing.amount,
+        assetCode: existing.assetCode,
+        assetType: existing.assetType,
+        feeAmount: existing.feeAmount,
+        feeValidation: {
+          status: existing.feeValidationStatus,
+          excessAmount: existing.excessAmount,
+        },
+        networkFee: existing.networkFee || null,
+        date: existing.confirmedAt || existing.createdAt,
+        status: existing.status,
+        confirmationStatus: existing.confirmationStatus,
+        localCurrency: {
+          amount: conversion.available ? conversion.localAmount : null,
+          currency: conversion.currency,
+          rate: conversion.rate,
+          rateTimestamp: conversion.rateTimestamp,
+          available: conversion.available,
+        },
+      });
     }
 
     let result;
@@ -462,6 +496,7 @@ async function verifyPayment(req, res, next) {
     const stellarExplorerUrl = getExplorerUrl(result.hash);
     res.json({
       verified: true,
+      cached: false,
       hash: result.hash,
       stellarExplorerUrl,
       explorerUrl: stellarExplorerUrl,
