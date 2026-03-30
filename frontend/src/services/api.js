@@ -42,3 +42,15 @@ export const getDisputes = (params = {}) => api.get("/disputes", { params });
 export const getDisputeById = (id) => api.get(`/disputes/${id}`);
 export const resolveDispute = (id, data) =>
   api.patch(`/disputes/${id}/resolve`, data);
+
+// Audit logs
+export const getRecentAuditLogs = (limit = 10) =>
+  api.get("/audit-logs/recent", { params: { limit } });
+export const getAuditLogs = (params = {}) =>
+  api.get("/audit-logs", { params });
+
+// Audit logs
+export const getRecentAuditLogs = (limit = 10) =>
+  api.get("/audit-logs/recent", { params: { limit } });
+export const getAuditLogs = (params = {}) =>
+  api.get("/audit-logs", { params });

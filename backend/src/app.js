@@ -13,6 +13,7 @@ const reportRoutes   = require('./routes/reportRoutes');
 const schoolRoutes   = require('./routes/schoolRoutes');
 const reminderRoutes = require('./routes/reminderRoutes');
 const disputeRoutes  = require('./routes/disputeRoutes');
+const auditRoutes    = require('./routes/auditRoutes');
 
 const { startPolling, stopPolling }                                   = require('./services/transactionService');
 const { startRetryWorker, stopRetryWorker, isRetryWorkerRunning }     = require('./services/retryService');
@@ -57,6 +58,7 @@ app.use('/api/fees',      feeRoutes);
 app.use('/api/reports',   reportRoutes);
 app.use('/api/reminders', reminderRoutes);
 app.use('/api/disputes',  disputeRoutes);
+app.use('/api/audit-logs', auditRoutes);
 app.get('/api/consistency', runConsistencyCheck);
 app.get('/health', healthCheck);
 

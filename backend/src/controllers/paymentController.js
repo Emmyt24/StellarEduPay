@@ -36,6 +36,7 @@ const {
   enrichPaymentWithConversion,
 } = require("../services/currencyConversionService");
 const { withStellarRetry } = require("../utils/withStellarRetry");
+const { logAudit } = require("../services/auditService");
 
 // Permanent error codes that should NOT be retried
 const PERMANENT_FAIL_CODES = [
@@ -461,9 +462,40 @@ async function syncAllPayments(req, res, next) {
   }
   _syncLocks.add(schoolId);
   try {
-    await syncPaymentsForSchool(req.school);
+    const result = await syncPaymentsForSchool(req.school);
+
+    // Audit log
+    if (req.auditContext) {
+      await logAudit({
+        schoolId,
+        action: 'payment_manual_sync',
+        performedBy: req.auditContext.performedBy,
+        targetId: schoolId,
+        targetType: 'payment',
+        details: { syncResult: result },
+        result: 'success',
+        ipAddress: req.auditContext.ipAddress,
+        userAgent: req.auditContext.userAgent,
+      });
+    }
+
     res.json({ message: "Sync complete" });
   } catch (err) {
+    // Audit log for failure
+    if (req.auditContext) {
+      await logAudit({
+        schoolId,
+        action: 'payment_manual_sync',
+        performedBy: req.auditContext.performedBy,
+        targetId: schoolId,
+        targetType: 'payment',
+        details: {},
+        result: 'failure',
+        errorMessage: err.message,
+        ipAddress: req.auditContext.ipAddress,
+        userAgent: req.auditContext.userAgent,
+      });
+    }
     next(wrapStellarError(err));
   } finally {
     _syncLocks.delete(schoolId);
@@ -485,7 +517,23 @@ async function getSyncStatus(req, res, next) {
 
 async function finalizePayments(req, res, next) {
   try {
-    await finalizeConfirmedPayments(req.schoolId);
+    const result = await finalizeConfirmedPayments(req.schoolId);
+
+    // Audit log
+    if (req.auditContext) {
+      await logAudit({
+        schoolId: req.schoolId,
+        action: 'payment_finalize',
+        performedBy: req.auditContext.performedBy,
+        targetId: req.schoolId,
+        targetType: 'payment',
+        details: { finalizeResult: result },
+        result: 'success',
+        ipAddress: req.auditContext.ipAddress,
+        userAgent: req.auditContext.userAgent,
+      });
+    }
+
     res.json({ message: "Finalization complete" });
   } catch (err) {
     next(err);

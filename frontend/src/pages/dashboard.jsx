@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import SyncButton from "../components/SyncButton";
+import AuditLog from "../components/AuditLog";
 import { getSyncStatus, getPaymentSummary } from "../services/api";
 
 function timeAgo(isoString) {
@@ -229,6 +230,9 @@ export default function Dashboard() {
             </div>
           ))}
         </div>
+
+        {/* Audit Log */}
+        <AuditLog limit={10} />
       </div>
     </>
   );
