@@ -11,7 +11,14 @@ services:
       - SCHOOL_WALLET_ADDRESS=${SCHOOL_WALLET_ADDRESS}
       - STELLAR_SECRET_KEY=${STELLAR_SECRET_KEY}
     depends_on:
-      - mongo
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   frontend:
     build:
@@ -22,7 +29,8 @@ services:
     ports:
       - "3000:3000"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
   mongo:
     image: mongo:7
@@ -30,6 +38,12 @@ services:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.runCommand({ ping: 1 })"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   # Runs a mongodump every 24 hours and retains 7 days of backups.
   # Backups are written to the host path defined by BACKUP_DIR (default: ./backups).
@@ -55,7 +69,8 @@ services:
     volumes:
       - ${BACKUP_DIR:-./backups}:/backups
     depends_on:
-      - mongo
+      mongo:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

@@ -70,20 +70,50 @@ async function getPaymentInstructions(req, res, next) {
   try {
     const limits = getPaymentLimits();
     const targetCurrency = req.school.localCurrency || "USD";
+    const { feeCategory } = req.query;
 
     const student = await Student.findOne({
       schoolId: req.schoolId,
       studentId: req.params.studentId,
     });
 
+    let feeAmount = student ? student.feeAmount : null;
     let feeConversion = null;
-    if (student && student.feeAmount) {
+    let categoryInfo = null;
+
+    // If feeCategory is specified and student has fees array, use that category
+    if (feeCategory && student && student.fees && student.fees.length > 0) {
+      const fee = student.fees.find(f => f.category === feeCategory);
+      if (fee) {
+        feeAmount = fee.amount;
+        categoryInfo = {
+          category: fee.category,
+          amount: fee.amount,
+          paid: fee.paid,
+          totalPaid: fee.totalPaid || 0,
+          remainingBalance: fee.remainingBalance || fee.amount,
+        };
+      }
+    }
+
+    if (feeAmount) {
       feeConversion = await convertToLocalCurrency(
-        student.feeAmount,
+        feeAmount,
         "XLM",
         targetCurrency,
       );
     }
+
+    // Build fees array for response
+    const fees = student && student.fees && student.fees.length > 0
+      ? student.fees.map(f => ({
+        category: f.category,
+        amount: f.amount,
+        paid: f.paid,
+        totalPaid: f.totalPaid || 0,
+        remainingBalance: f.remainingBalance || f.amount,
+      }))
+      : [];
 
     res.json({
       walletAddress: req.school.stellarAddress,
@@ -95,14 +125,17 @@ async function getPaymentInstructions(req, res, next) {
         displayName: a.displayName,
       })),
       paymentLimits: { min: limits.min, max: limits.max },
-      feeAmount: student ? student.feeAmount : null,
+      feeAmount,
+      feeCategory: feeCategory || null,
+      categoryInfo,
+      fees,
       feeLocalEquivalent: feeConversion?.available
         ? {
-            amount: feeConversion.localAmount,
-            currency: feeConversion.currency,
-            rate: feeConversion.rate,
-            rateTimestamp: feeConversion.rateTimestamp,
-          }
+          amount: feeConversion.localAmount,
+          currency: feeConversion.currency,
+          rate: feeConversion.rate,
+          rateTimestamp: feeConversion.rateTimestamp,
+        }
         : null,
       note: "Include the payment intent memo exactly when sending payment. The memo must be sent as a text memo (MEMO_TEXT). Other memo types (MEMO_ID, MEMO_HASH, MEMO_RETURN) will not be recognised and your payment will not be matched.",
       memoType: "text",
@@ -116,7 +149,7 @@ async function getPaymentInstructions(req, res, next) {
 async function createPaymentIntent(req, res, next) {
   try {
     const { schoolId } = req;
-    const { studentId } = req.body;
+    const { studentId, feeCategory } = req.body;
 
     const student = await Student.findOne({ schoolId, studentId });
     if (!student)
@@ -124,8 +157,31 @@ async function createPaymentIntent(req, res, next) {
         .status(404)
         .json({ error: "Student not found", code: "NOT_FOUND" });
 
+    let feeAmount = student.feeAmount;
+    let categoryInfo = null;
+
+    // If feeCategory is specified and student has fees array, use that category
+    if (feeCategory && student.fees && student.fees.length > 0) {
+      const fee = student.fees.find(f => f.category === feeCategory);
+      if (fee) {
+        feeAmount = fee.amount;
+        categoryInfo = {
+          category: fee.category,
+          amount: fee.amount,
+          paid: fee.paid,
+          totalPaid: fee.totalPaid || 0,
+          remainingBalance: fee.remainingBalance || fee.amount,
+        };
+      } else {
+        return res.status(400).json({
+          error: `Fee category '${feeCategory}' not found for student`,
+          code: "INVALID_FEE_CATEGORY",
+        });
+      }
+    }
+
     const { validatePaymentAmount } = require("../utils/paymentLimits");
-    const limitValidation = validatePaymentAmount(student.feeAmount);
+    const limitValidation = validatePaymentAmount(feeAmount);
     if (!limitValidation.valid) {
       return res.status(400).json({
         error: limitValidation.error,
@@ -142,14 +198,18 @@ async function createPaymentIntent(req, res, next) {
     const intent = await PaymentIntent.create({
       schoolId,
       studentId,
-      amount: student.feeAmount,
+      amount: feeAmount,
+      feeCategory: feeCategory || null,
       memo,
       status: "PENDING",
       expiresAt,
       startedAt: new Date(),
     });
 
-    res.status(201).json(intent);
+    res.status(201).json({
+      ...intent.toObject(),
+      categoryInfo,
+    });
   } catch (err) {
     next(err);
   }
@@ -317,7 +377,7 @@ async function verifyPayment(req, res, next) {
           amount: 0,
           status: "FAILED",
           feeValidationStatus: "unknown",
-        }).catch(() => {});
+        }).catch(() => { });
         return next(stellarErr);
       }
 
@@ -546,11 +606,24 @@ async function getStudentPayments(req, res, next) {
     const network =
       process.env.STELLAR_NETWORK === "mainnet" ? "public" : "testnet";
 
+    // Pagination parameters
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const skip = (page - 1) * limit;
+
+    // Get total count for pagination metadata
+    const total = await Payment.countDocuments({
+      schoolId: req.schoolId,
+      studentId: req.params.studentId,
+    });
+
     const payments = await Payment.find({
       schoolId: req.schoolId,
       studentId: req.params.studentId,
     })
       .sort({ confirmedAt: -1 })
+      .skip(skip)
+      .limit(limit)
       .lean();
 
     const enriched = await Promise.all(
@@ -563,7 +636,15 @@ async function getStudentPayments(req, res, next) {
         return { ...converted, explorerUrl };
       }),
     );
-    res.json(enriched);
+
+    const pages = Math.ceil(total / limit);
+
+    res.json({
+      payments: enriched,
+      total,
+      page,
+      pages,
+    });
   } catch (err) {
     next(err);
   }
@@ -656,12 +737,50 @@ async function getStudentBalance(req, res, next) {
     const buildLocal = (conv) =>
       conv.available
         ? {
-            amount: conv.localAmount,
-            currency: conv.currency,
-            rate: conv.rate,
-            rateTimestamp: conv.rateTimestamp,
-          }
+          amount: conv.localAmount,
+          currency: conv.currency,
+          rate: conv.rate,
+          rateTimestamp: conv.rateTimestamp,
+        }
         : null;
+
+    // Build per-category breakdown if fees array exists
+    let categoryBreakdown = [];
+    if (student.fees && student.fees.length > 0) {
+      // Get payments grouped by fee category
+      const categoryPayments = await Payment.aggregate([
+        { $match: { schoolId, studentId, feeCategory: { $ne: null } } },
+        {
+          $group: {
+            _id: "$feeCategory",
+            totalPaid: { $sum: "$amount" },
+            count: { $sum: 1 },
+          },
+        },
+      ]);
+
+      const categoryPaymentMap = {};
+      categoryPayments.forEach(cp => {
+        categoryPaymentMap[cp._id] = {
+          totalPaid: parseFloat(cp.totalPaid.toFixed(7)),
+          installmentCount: cp.count,
+        };
+      });
+
+      categoryBreakdown = student.fees.map(fee => {
+        const paid = categoryPaymentMap[fee.category] || { totalPaid: 0, installmentCount: 0 };
+        const remaining = Math.max(0, fee.amount - paid.totalPaid);
+        return {
+          category: fee.category,
+          amount: fee.amount,
+          totalPaid: paid.totalPaid,
+          remainingBalance: remaining,
+          paid: paid.totalPaid >= fee.amount,
+          installmentCount: paid.installmentCount,
+          paymentDeadline: fee.paymentDeadline,
+        };
+      });
+    }
 
     res.json({
       studentId,
@@ -671,6 +790,7 @@ async function getStudentBalance(req, res, next) {
       excessAmount,
       feePaid: totalPaid >= student.feeAmount,
       installmentCount: result.length ? result[0].count : 0,
+      categoryBreakdown,
       localCurrency: {
         currency: targetCurrency,
         available: feeConv.available,
@@ -1059,7 +1179,7 @@ async function getPaymentSummary(req, res, next) {
   try {
     const { schoolId } = req;
 
-    const [studentStats, xlmStats] = await Promise.all([
+    const [studentStats, xlmStats, categoryStats] = await Promise.all([
       Student.aggregate([
         { $match: { schoolId, deletedAt: null } },
         {
@@ -1075,6 +1195,17 @@ async function getPaymentSummary(req, res, next) {
         { $match: { schoolId, status: "SUCCESS", deletedAt: null } },
         { $group: { _id: null, totalXlmCollected: { $sum: "$amount" } } },
       ]),
+      // Get per-category statistics
+      Payment.aggregate([
+        { $match: { schoolId, status: "SUCCESS", deletedAt: null, feeCategory: { $ne: null } } },
+        {
+          $group: {
+            _id: "$feeCategory",
+            totalCollected: { $sum: "$amount" },
+            paymentCount: { $sum: 1 },
+          },
+        },
+      ]),
     ]);
 
     const s = studentStats[0] || {
@@ -1084,11 +1215,19 @@ async function getPaymentSummary(req, res, next) {
     };
     const x = xlmStats[0] || { totalXlmCollected: 0 };
 
+    // Build category breakdown
+    const categoryBreakdown = categoryStats.map(cat => ({
+      category: cat._id,
+      totalCollected: parseFloat(cat.totalCollected.toFixed(7)),
+      paymentCount: cat.paymentCount,
+    }));
+
     res.json({
       totalStudents: s.totalStudents,
       paidCount: s.paidCount,
       unpaidCount: s.unpaidCount,
       totalXlmCollected: parseFloat(x.totalXlmCollected.toFixed(7)),
+      categoryBreakdown,
     });
   } catch (err) {
     next(err);
