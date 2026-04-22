@@ -121,7 +121,7 @@ export default function TransactionCard({
         <span style={{ color: "#888" }}>Tx: </span>
         {tx ? (
           <a
-            href={transactionExplorerUrl}
+            href={explorerUrl}
             target="_blank"
             rel="noopener noreferrer"
             title={tx}

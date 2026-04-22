@@ -116,6 +116,21 @@ mongoose.connection.on('error', (err) =>
 );
 
 connectWithRetry().then(async () => {
+  // Seed default system config entries on first run
+  const SystemConfig = require('./models/systemConfigModel');
+  const DEFAULTS = [
+    { key: 'maintenanceMode',    value: false },
+    { key: 'maxSyncBatchSize',   value: 20 },
+    { key: 'reminderEnabled',    value: true },
+    { key: 'reminderIntervalMs', value: 86400000 },
+  ];
+  await Promise.all(
+    DEFAULTS.map(({ key, value }) =>
+      SystemConfig.findOneAndUpdate({ key }, { $setOnInsert: { key, value } }, { upsert: true })
+    )
+  );
+  logger.info('System config defaults ensured');
+
   startPolling();
   startConsistencyScheduler();
   startRetryWorker();
