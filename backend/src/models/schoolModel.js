@@ -1,6 +1,7 @@
 'use strict';
 
 const mongoose = require('mongoose');
+const StellarSdk = require('@stellar/stellar-sdk');
 
 /**
  * School model — each school is a fully independent tenant.
@@ -18,7 +19,14 @@ const schoolSchema = new mongoose.Schema(
     schoolId:       { type: String, required: true, unique: true, index: true },
     name:           { type: String, required: true, trim: true },
     slug:           { type: String, required: true, unique: true, index: true, lowercase: true, trim: true },
-    stellarAddress: { type: String, required: true },
+    stellarAddress: {
+      type: String,
+      required: true,
+      validate: {
+        validator: (value) => StellarSdk.StrKey.isValidEd25519PublicKey(value),
+        message: 'stellarAddress must be a valid Stellar public key (Ed25519)',
+      },
+    },
     network:        { type: String, enum: ['testnet', 'mainnet'], default: 'testnet' },
     isActive:       { type: Boolean, default: true, index: true },
     adminEmail:     { type: String, default: null },

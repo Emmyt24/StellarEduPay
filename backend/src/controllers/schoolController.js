@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const StellarSdk = require('@stellar/stellar-sdk');
 const School = require('../models/schoolModel');
 const { logAudit } = require('../services/auditService');
 
@@ -14,8 +15,10 @@ async function createSchool(req, res, next) {
       errors.push('name is required');
     if (!slug || !/^[a-z0-9-]{2,60}$/.test(slug.trim().toLowerCase()))
       errors.push('slug must be 2–60 lowercase alphanumeric characters or hyphens');
-    if (!stellarAddress || !/^G[A-Z2-7]{55}$/.test(stellarAddress))
-      errors.push('stellarAddress must be a valid Stellar public key (starts with G, 56 chars)');
+    if (!stellarAddress)
+      errors.push('stellarAddress is required');
+    else if (!StellarSdk.StrKey.isValidEd25519PublicKey(stellarAddress))
+      errors.push('stellarAddress must be a valid Stellar public key (Ed25519)');
     if (network && !['testnet', 'mainnet'].includes(network))
       errors.push('network must be "testnet" or "mainnet"');
     if (errors.length) return res.status(400).json({ errors, code: 'VALIDATION_ERROR' });
@@ -54,6 +57,11 @@ async function createSchool(req, res, next) {
       e.code = 'DUPLICATE_SCHOOL';
       e.status = 409;
       return next(e);
+    }
+    // Handle Mongoose validation errors
+    if (err.name === 'ValidationError') {
+      const validationErrors = Object.values(err.errors).map(e => e.message);
+      return res.status(400).json({ errors: validationErrors, code: 'VALIDATION_ERROR' });
     }
     next(err);
   }
@@ -96,6 +104,14 @@ async function updateSchool(req, res, next) {
       if (req.body[key] !== undefined) updates[key] = req.body[key];
     }
 
+    // Validate stellarAddress if being updated
+    if (updates.stellarAddress && !StellarSdk.StrKey.isValidEd25519PublicKey(updates.stellarAddress)) {
+      return res.status(400).json({
+        error: 'stellarAddress must be a valid Stellar public key (Ed25519)',
+        code: 'INVALID_STELLAR_ADDRESS',
+      });
+    }
+
     const original = await School.findOne({ slug: req.params.schoolSlug.toLowerCase(), isActive: true }).lean();
     if (!original) {
       const e = new Error('School not found');
@@ -126,6 +142,11 @@ async function updateSchool(req, res, next) {
 
     res.json(school);
   } catch (err) {
+    // Handle Mongoose validation errors
+    if (err.name === 'ValidationError') {
+      const validationErrors = Object.values(err.errors).map(e => e.message);
+      return res.status(400).json({ errors: validationErrors, code: 'VALIDATION_ERROR' });
+    }
     next(err);
   }
 }
