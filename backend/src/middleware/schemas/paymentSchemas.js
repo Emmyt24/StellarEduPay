@@ -1,0 +1,138 @@
+'use strict';
+
+/**
+ * Payment Validation Schemas
+ * --------------------------
+ * Pure Joi schema objects — no Express logic here.
+ * Each schema can be consumed by the `validate()` factory in validate.js
+ * or reused directly in unit tests without spinning up an HTTP server.
+ *
+ * Stellar precision note: XLM and USDC on Stellar both support up to
+ * 7 decimal places.  Amounts with more than 7 dp are rejected.
+ */
+
+const Joi = require('joi');
+
+// ── Shared atomic rules ──────────────────────────────────────────────────────
+
+/**
+ * A valid MongoDB ObjectId is a 24-character lowercase hex string.
+ * Using `hex()` + `length()` keeps the error messages precise.
+ */
+const mongoObjectId = Joi.string()
+  .hex()
+  .length(24)
+  .lowercase()
+  .messages({
+    'string.base':     '"studentId" must be a string',
+    'string.hex':      '"studentId" must be a valid MongoDB ObjectId (24-char hex)',
+    'string.length':   '"studentId" must be a valid MongoDB ObjectId (exactly 24 characters)',
+    'string.lowercase':'\"studentId\" must be lowercase hex',
+    'any.required':    '"studentId" is required',
+  });
+
+/** Minimum payment amount (1.0 XLM / USDC) matching Stellar's minimum meaningful transfer. */
+const MIN_AMOUNT = 1.0;
+
+/**
+ * Validates that a number is:
+ *   - a finite positive number > MIN_AMOUNT
+ *   - has at most 7 decimal places (Stellar precision)
+ */
+const stellarAmount = Joi.number()
+  .positive()
+  .min(MIN_AMOUNT)
+  .custom((value, helpers) => {
+    // Check decimal precision: multiply by 10^7, compare to floored value
+    if (Math.round(value * 1e7) !== Math.floor(value * 1e7)) {
+      return helpers.error('number.precision');
+    }
+    // Regex approach — stringify and count decimal places
+    const str = value.toString();
+    const dotIndex = str.indexOf('.');
+    if (dotIndex !== -1 && str.length - dotIndex - 1 > 7) {
+      return helpers.error('number.precision');
+    }
+    return value;
+  })
+  .messages({
+    'number.base':      '"amount" must be a number',
+    'number.positive':  '"amount" must be a positive number greater than 0',
+    'number.min':       `"amount" must be greater than or equal to ${MIN_AMOUNT} XLM`,
+    'number.precision': '"amount" must not exceed 7 decimal places (Stellar precision)',
+    'any.required':     '"amount" is required',
+  });
+
+/** Whitelisted Stellar asset codes — extend this array as more tokens are accepted. */
+const ALLOWED_CURRENCIES = ['XLM', 'USDC'];
+
+const currencyCode = Joi.string()
+  .valid(...ALLOWED_CURRENCIES)
+  .uppercase()
+  .messages({
+    'string.base':  '"currency" must be a string',
+    'any.only':     `"currency" must be one of [${ALLOWED_CURRENCIES.join(', ')}]`,
+  });
+
+// ── Payment Intent ────────────────────────────────────────────────────────────
+
+/**
+ * POST /api/payments/intent
+ *
+ * `studentId`  required  — MongoDB ObjectId hex identifying the student record.
+ * `amount`     optional  — Pre-declared amount (overridden by the on-chain value).
+ * `currency`   optional  — Asset code; must be whitelisted if provided.
+ */
+const createPaymentIntentSchema = Joi.object({
+  studentId: mongoObjectId.required(),
+  amount:    stellarAmount.optional(),
+  currency:  currencyCode.optional(),
+}).options({ allowUnknown: false, abortEarly: false });
+
+// ── Submit Transaction ────────────────────────────────────────────────────────
+
+/**
+ * POST /api/payments/submit
+ *
+ * `xdr`  required  — Base64-encoded Stellar XDR transaction envelope.
+ *                    The controller decodes and validates the Stellar-level
+ *                    content; this schema only ensures the field is present
+ *                    and non-empty.
+ */
+const submitTransactionSchema = Joi.object({
+  xdr: Joi.string().trim().min(1).required().messages({
+    'string.base':  '"xdr" must be a string',
+    'string.empty': '"xdr" must not be an empty string',
+    'string.min':   '"xdr" must not be an empty string',
+    'any.required': '"xdr" is required',
+  }),
+}).options({ allowUnknown: false, abortEarly: false });
+
+// ── Verify Payment ────────────────────────────────────────────────────────────
+
+/**
+ * POST /api/payments/verify
+ *
+ * `txHash`  required  — 64-character lowercase hex string (SHA-256 of the
+ *                       Stellar transaction XDR).
+ */
+const verifyPaymentSchema = Joi.object({
+  txHash: Joi.string()
+    .pattern(/^[a-f0-9]{64}$/)
+    .required()
+    .messages({
+      'string.base':    '"txHash" must be a string',
+      'string.pattern.base': '"txHash" must be a valid 64-character hex string',
+      'any.required':   '"txHash" is required',
+    }),
+}).options({ allowUnknown: false, abortEarly: false });
+
+// ── Exports ───────────────────────────────────────────────────────────────────
+
+module.exports = {
+  createPaymentIntentSchema,
+  submitTransactionSchema,
+  verifyPaymentSchema,
+  /** Exported for reuse in future schemas (e.g. student registration). */
+  _atoms: { mongoObjectId, stellarAmount, currencyCode, ALLOWED_CURRENCIES },
+};

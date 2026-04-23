@@ -1,37 +1,38 @@
+"use strict";
+
 /**
  * Retry Service — Stellar Network Outage Recovery
  *
- * When a Stellar network call fails with a transient error (STELLAR_NETWORK_ERROR),
- * the transaction hash is cached in MongoDB as a PendingVerification document.
- * This service runs on a configurable interval, checks network reachability,
- * and re-attempts verification for all queued items using exponential backoff.
- *
- * Guarantees:
- *  - No transaction is lost during a Stellar outage
- *  - Retries stop after MAX_ATTEMPTS (dead-lettered for manual review)
- *  - Only one retry worker runs at a time (re-entrancy guard)
+ * When a Stellar network call fails with a transient error, the transaction hash
+ * is cached in MongoDB as a PendingVerification document (with schoolId so the
+ * correct wallet is used on retry). This service runs on a configurable interval,
+ * checks network reachability, and re-attempts verification with exponential backoff.
  */
 
-const PendingVerification = require('../models/pendingVerificationModel');
-const { verifyTransaction, recordPayment } = require('./stellarService');
-const { server } = require('../config/stellarConfig');
+const PendingVerification = require("../models/pendingVerificationModel");
+const Payment = require("../models/paymentModel");
+const School = require("../models/schoolModel");
+const { verifyTransaction, recordPayment } = require("./stellarService");
+const { server } = require("../config/stellarConfig");
+const config = require("../config/index");
+const { withStellarRetry } = require("../utils/withStellarRetry");
+const logger = require("../utils/logger").child("RetryService");
 
-const RETRY_INTERVAL_MS = parseInt(process.env.RETRY_INTERVAL_MS, 10) || 60_000; // 1 min
-const MAX_ATTEMPTS = parseInt(process.env.RETRY_MAX_ATTEMPTS, 10) || 10;
+const RETRY_INTERVAL_MS = config.RETRY_INTERVAL_MS;
+const MAX_ATTEMPTS = config.RETRY_MAX_ATTEMPTS;
 
-// Exponential backoff: 1m, 2m, 4m, 8m … capped at 60 minutes
+// Exponential backoff: 1m, 2m, 4m … capped at 60 minutes
 function nextRetryDelay(attempts) {
   const delayMs = Math.min(Math.pow(2, attempts) * 60_000, 60 * 60_000);
   return new Date(Date.now() + delayMs);
 }
 
-/**
- * Probe the Stellar Horizon server with a lightweight call.
- * Returns true if the network is reachable, false otherwise.
- */
 async function isStellarReachable() {
   try {
-    await server.ledgers().order('desc').limit(1).call();
+    await withStellarRetry(
+      () => server.ledgers().order("desc").limit(1).call(),
+      { maxAttempts: 2, label: "isStellarReachable" },
+    );
     return true;
   } catch {
     return false;
@@ -40,42 +41,48 @@ async function isStellarReachable() {
 
 /**
  * Queue a transaction hash for later retry.
- * Safe to call multiple times — upserts on txHash.
+ * schoolId is stored so the retry worker can use the right wallet address.
  *
- * @param {string} txHash
+ * @param {string}      txHash
  * @param {string|null} studentId
- * @param {string} errorMessage
+ * @param {string}      errorMessage
+ * @param {string}      schoolId
  */
-async function queueForRetry(txHash, studentId = null, errorMessage = '') {
+async function queueForRetry(
+  txHash,
+  studentId = null,
+  errorMessage = "",
+  schoolId,
+) {
   await PendingVerification.findOneAndUpdate(
     { txHash },
     {
-      $setOnInsert: { txHash, studentId },
+      $setOnInsert: { txHash, studentId, schoolId },
       $set: {
-        status: 'pending',
+        status: "pending",
         lastError: errorMessage,
         nextRetryAt: new Date(),
       },
     },
-    { upsert: true, new: true }
+    { upsert: true, new: true },
   );
-  console.log(`[RetryService] Queued ${txHash} for retry — reason: ${errorMessage}`);
+  logger.info("Queued transaction for retry", {
+    txHash,
+    schoolId,
+    reason: errorMessage,
+  });
 }
 
 let _running = false;
 let _timer = null;
 
-/**
- * Process all pending verifications that are due for retry.
- * Re-entrancy guard prevents overlapping runs.
- */
 async function processPendingVerifications() {
   if (_running) return;
   _running = true;
 
   try {
     const due = await PendingVerification.find({
-      status: 'pending',
+      status: "pending",
       nextRetryAt: { $lte: new Date() },
     }).limit(50);
 
@@ -84,89 +91,155 @@ async function processPendingVerifications() {
       return;
     }
 
-    // Check network once before processing the batch
     const reachable = await isStellarReachable();
     if (!reachable) {
-      console.warn('[RetryService] Stellar network still unreachable — skipping batch');
+      logger.warn("Stellar network still unreachable — skipping batch");
       _running = false;
       return;
     }
 
-    console.log(`[RetryService] Processing ${due.length} pending verification(s)`);
+    logger.info(`Processing ${due.length} pending verification(s)`);
 
     for (const item of due) {
-      // Mark as processing to prevent concurrent workers picking it up
       await PendingVerification.findByIdAndUpdate(item._id, {
-        status: 'processing',
+        status: "processing",
         lastAttemptAt: new Date(),
         $inc: { attempts: 1 },
       });
 
       try {
-        const result = await verifyTransaction(item.txHash);
-
-        if (!result) {
-          // Transaction is permanently invalid (bad memo, wrong destination, etc.)
-          // Dead-letter it so it doesn't retry forever
+        // Look up the school to get the correct wallet address for verification
+        const school = await School.findOne({
+          schoolId: item.schoolId,
+          isActive: true,
+        }).lean();
+        if (!school) {
           await PendingVerification.findByIdAndUpdate(item._id, {
-            status: 'dead_letter',
-            lastError: 'verifyTransaction returned null — transaction is permanently invalid',
+            status: "dead_letter",
+            lastError: `School ${item.schoolId} not found or inactive`,
           });
-          console.warn(`[RetryService] Dead-lettered ${item.txHash} — permanently invalid`);
           continue;
         }
 
-        // Record the payment now that verification succeeded
+        const result = await verifyTransaction(
+          item.txHash,
+          school.stellarAddress,
+        );
+
+        if (!result) {
+          await PendingVerification.findByIdAndUpdate(item._id, {
+            status: "dead_letter",
+            lastError:
+              "verifyTransaction returned null — transaction is permanently invalid",
+          });
+          logger.warn("Dead-lettered transaction — permanently invalid", {
+            txHash: item.txHash,
+          });
+          continue;
+        }
+
         await recordPayment({
+          schoolId: item.schoolId,
           studentId: result.studentId || result.memo,
           txHash: result.hash,
+          transactionHash: result.hash,
           amount: result.amount,
           feeAmount: result.expectedAmount || result.feeAmount,
           feeValidationStatus: result.feeValidation.status,
-          status: 'confirmed',
+          excessAmount: result.feeValidation.excessAmount || 0,
+          status: "confirmed",
           memo: result.memo,
           confirmedAt: result.date ? new Date(result.date) : new Date(),
         });
 
         await PendingVerification.findByIdAndUpdate(item._id, {
-          status: 'resolved',
+          status: "resolved",
           resolvedAt: new Date(),
           lastError: null,
         });
 
-        console.log(`[RetryService] Resolved ${item.txHash} after ${item.attempts + 1} attempt(s)`);
+        logger.info("Transaction resolved", {
+          txHash: item.txHash,
+          attempts: item.attempts + 1,
+        });
       } catch (err) {
         const attempts = item.attempts + 1;
-        const isStellarError = !err.code || err.code === 'STELLAR_NETWORK_ERROR';
-        const isPermanentError = ['TX_FAILED', 'MISSING_MEMO', 'INVALID_DESTINATION', 'UNSUPPORTED_ASSET', 'DUPLICATE_TX'].includes(err.code);
+        const isPermanentError = [
+          "TX_FAILED",
+          "MISSING_MEMO",
+          "INVALID_DESTINATION",
+          "UNSUPPORTED_ASSET",
+          "DUPLICATE_TX",
+        ].includes(err.code);
+        const isStellarError =
+          !err.code || err.code === "STELLAR_NETWORK_ERROR";
 
         if (isPermanentError || attempts >= MAX_ATTEMPTS) {
           await PendingVerification.findByIdAndUpdate(item._id, {
-            status: 'dead_letter',
+            status: "dead_letter",
             lastError: err.message,
           });
-          console.error(`[RetryService] Dead-lettered ${item.txHash} — ${isPermanentError ? 'permanent error' : 'max attempts reached'}: ${err.message}`);
+
+          // Create a FAILED Payment audit record for on-chain failures
+          if (err.code === "TX_FAILED") {
+            await Payment.create({
+              schoolId: item.schoolId,
+              studentId: item.studentId || "unknown",
+              txHash: item.txHash,
+              transactionHash: item.txHash,
+              amount: 0,
+              status: "FAILED",
+              feeValidationStatus: "unknown",
+              confirmationStatus: "failed",
+              confirmedAt: new Date(),
+              suspicionReason: err.message,
+            }).catch((e) => {
+              if (e.code !== 11000)
+                logger.error("Failed to record failed tx audit", {
+                  txHash: item.txHash,
+                  error: e.message,
+                });
+            });
+          }
+
+          logger.error("Dead-lettered transaction", {
+            txHash: item.txHash,
+            reason: isPermanentError
+              ? "permanent error"
+              : "max attempts reached",
+            error: err.message,
+            code: err.code,
+          });
         } else if (isStellarError) {
-          // Transient network error — schedule next retry with backoff
           await PendingVerification.findByIdAndUpdate(item._id, {
-            status: 'pending',
+            status: "pending",
             lastError: err.message,
             nextRetryAt: nextRetryDelay(attempts),
           });
-          console.warn(`[RetryService] Rescheduled ${item.txHash} (attempt ${attempts}) — next retry at ${nextRetryDelay(attempts).toISOString()}`);
+          logger.warn("Rescheduled transaction after Stellar error", {
+            txHash: item.txHash,
+            attempt: attempts,
+            error: err.message,
+          });
         } else {
-          // Unknown error — reschedule conservatively
           await PendingVerification.findByIdAndUpdate(item._id, {
-            status: 'pending',
+            status: "pending",
             lastError: err.message,
             nextRetryAt: nextRetryDelay(attempts),
           });
-          console.error(`[RetryService] Unknown error for ${item.txHash}: ${err.message}`);
+          logger.error("Unknown error processing transaction", {
+            txHash: item.txHash,
+            error: err.message,
+            code: err.code,
+          });
         }
       }
     }
   } catch (err) {
-    console.error('[RetryService] Unexpected error in processPendingVerifications:', err.message);
+    logger.error("Unexpected error in processPendingVerifications", {
+      error: err.message,
+      stack: err.stack,
+    });
   } finally {
     _running = false;
   }
@@ -174,8 +247,10 @@ async function processPendingVerifications() {
 
 function startRetryWorker() {
   if (_timer) return;
-  console.log(`[RetryService] Starting — interval: ${RETRY_INTERVAL_MS}ms, max attempts: ${MAX_ATTEMPTS}`);
-  processPendingVerifications(); // immediate first run
+  logger.info(
+    `Starting — interval: ${RETRY_INTERVAL_MS}ms, max attempts: ${MAX_ATTEMPTS}`,
+  );
+  processPendingVerifications();
   _timer = setInterval(processPendingVerifications, RETRY_INTERVAL_MS);
 }
 
@@ -183,8 +258,12 @@ function stopRetryWorker() {
   if (_timer) {
     clearInterval(_timer);
     _timer = null;
-    console.log('[RetryService] Stopped');
+    logger.info("Stopped");
   }
+}
+
+function isRetryWorkerRunning() {
+  return _running;
 }
 
 module.exports = {
@@ -193,4 +272,5 @@ module.exports = {
   isStellarReachable,
   startRetryWorker,
   stopRetryWorker,
+  isRetryWorkerRunning,
 };

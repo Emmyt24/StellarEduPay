@@ -1,17 +1,18 @@
-const { generateReport, reportToCsv } = require('../services/reportService');
+'use strict';
+
+const { generateReport, reportToCsv, getDashboardMetrics } = require('../services/reportService');
+const { get, set, KEYS, TTL } = require('../cache');
 
 /**
  * GET /api/reports
  * Query params: startDate, endDate, format (json|csv)
  *
- * Returns a payment summary report for the school.
- * Defaults to JSON; pass ?format=csv to get a downloadable CSV file.
+ * Returns a payment summary report scoped to the current school.
  */
 async function getReport(req, res, next) {
   try {
     const { startDate, endDate, format = 'json' } = req.query;
 
-    // Basic date validation
     if (startDate && isNaN(Date.parse(startDate))) {
       const err = new Error('Invalid startDate — must be a valid ISO date string (e.g. 2026-01-01)');
       err.code = 'VALIDATION_ERROR';
@@ -28,7 +29,12 @@ async function getReport(req, res, next) {
       return next(err);
     }
 
-    const report = await generateReport({ startDate, endDate });
+    const cacheKey = KEYS.report(startDate, endDate);
+    let report = get(cacheKey);
+    if (report === undefined) {
+      report = await generateReport({ schoolId: req.schoolId, startDate, endDate });
+      set(cacheKey, report, TTL.REPORT);
+    }
 
     if (format === 'csv') {
       const csv = reportToCsv(report);
@@ -44,9 +50,6 @@ async function getReport(req, res, next) {
   }
 }
 
-/**
- * Build a descriptive filename for the CSV download.
- */
 function buildFilename(startDate, endDate) {
   const parts = ['school-payment-report'];
   if (startDate) parts.push(startDate);
@@ -54,4 +57,22 @@ function buildFilename(startDate, endDate) {
   return `${parts.join('_')}.csv`;
 }
 
-module.exports = { getReport };
+/**
+ * GET /api/reports/dashboard
+ * Returns aggregated metrics for the frontend dashboard.
+ */
+async function getDashboard(req, res, next) {
+  try {
+    const cacheKey = `dashboard:${req.schoolId}`;
+    let metrics = get(cacheKey);
+    if (metrics === undefined) {
+      metrics = await getDashboardMetrics({ schoolId: req.schoolId });
+      set(cacheKey, metrics, TTL.REPORT);
+    }
+    res.json(metrics);
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { getReport, getDashboard };

@@ -3,16 +3,27 @@
 const StellarSdk = require('@stellar/stellar-sdk');
 const config = require('./index');
 
-const server = new StellarSdk.Horizon.Server(config.HORIZON_URL);
+const server = new StellarSdk.Horizon.Server(config.HORIZON_URL, {
+  timeout: config.STELLAR_TIMEOUT_MS,
+});
 
 const networkPassphrase = config.IS_TESTNET
   ? StellarSdk.Networks.TESTNET
   : StellarSdk.Networks.PUBLIC;
 
-const SCHOOL_WALLET = config.SCHOOL_WALLET_ADDRESS;
+// In multi-school setup, SCHOOL_WALLET_ADDRESS is optional (only used for migration)
+// Each school has its own stellarAddress in the database
+const SCHOOL_WALLET = config.SCHOOL_WALLET_ADDRESS || null;
 
-// Accepted assets — add new entries here to support additional tokens
-const ACCEPTED_ASSETS = {
+if (SCHOOL_WALLET && !StellarSdk.StrKey.isValidEd25519PublicKey(SCHOOL_WALLET)) {
+  throw new Error(
+    `[Config] SCHOOL_WALLET_ADDRESS is invalid. ` +
+    'Provide a valid Stellar public key (starts with G).'
+  );
+}
+
+// All known assets
+const ALL_ASSETS = {
   XLM: {
     code: 'XLM',
     type: 'native',
@@ -28,6 +39,16 @@ const ACCEPTED_ASSETS = {
     decimals: 7,
   },
 };
+
+// Only the asset configured via ACCEPTED_ASSET env var (default: XLM)
+const configuredAsset = ALL_ASSETS[config.ACCEPTED_ASSET];
+if (!configuredAsset) {
+  throw new Error(
+    `[Config] ACCEPTED_ASSET "${config.ACCEPTED_ASSET}" is not supported. Valid values: ${Object.keys(ALL_ASSETS).join(', ')}`
+  );
+}
+
+const ACCEPTED_ASSETS = { [configuredAsset.code]: configuredAsset };
 
 /**
  * Check whether an asset (by code and type) is accepted by the system.
