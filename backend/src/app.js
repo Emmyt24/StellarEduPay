@@ -20,6 +20,7 @@ const { startRetryWorker, stopRetryWorker, isRetryWorkerRunning } = require('./s
 const { startConsistencyScheduler } = require('./services/consistencyScheduler');
 const { startReminderScheduler, stopReminderScheduler } = require('./services/reminderService');
 const { startWorker: startTxQueueWorker, stopWorker: stopTxQueueWorker } = require('./services/transactionQueueService');
+const { startSessionCleanupScheduler, stopSessionCleanupScheduler } = require('./services/sessionCleanupService');
 const { initializeRetryQueue, setupMonitoring } = require('./config/retryQueueSetup');
 const { notFoundHandler, globalErrorHandler } = require('./middleware/errorHandler');
 const { requestLogger } = require('./middleware/requestLogger');
@@ -139,6 +140,7 @@ connectWithRetry().then(async () => {
   startRetryWorker();
   startTxQueueWorker();
   startReminderScheduler();
+  startSessionCleanupScheduler();
 
   try {
     await initializeRetryQueue(app);
@@ -163,6 +165,7 @@ async function shutdown(signal) {
   stopRetryWorker();
   stopTxQueueWorker();
   stopReminderScheduler();
+  stopSessionCleanupScheduler();
 
   const deadline = Date.now() + 8_000;
   while (isRetryWorkerRunning() && Date.now() < deadline) {
