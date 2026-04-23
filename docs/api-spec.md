@@ -910,3 +910,42 @@ Validation middleware failures return an `errors` array:
 | `STELLAR_NETWORK_ERROR` | 502 | Stellar Horizon API unreachable |
 | `REQUEST_TIMEOUT` | 503 | Request exceeded server timeout |
 | `INTERNAL_ERROR` | 500 | Unexpected server error |
+
+---
+
+## Transaction Queue Durability
+
+The transaction processing queue (`transactionQueue.js`) provides **durable job delivery** via a two-layer approach:
+
+### How it works
+
+1. **MongoDB persistence first** — before a job is handed to Redis/BullMQ, a `PendingVerification` document is upserted with `status: pending`. This write is the source of truth.
+
+2. **Redis/BullMQ best-effort** — the job is then added to BullMQ. If Redis is unavailable the job is still safe in MongoDB and will be recovered on the next startup.
+
+3. **Startup recovery** — on every server start, `recoverPendingJobs()` queries MongoDB for all documents with `status: pending | processing` and re-enqueues them into BullMQ. Documents with `status: processing` are reset to `pending` first (they were in-flight when the server crashed).
+
+4. **Outcome tracking** — when a job completes successfully the document is updated to `status: resolved`. When a job permanently fails (e.g. `TX_FAILED`, `UNSUPPORTED_ASSET`) the document is updated to `status: dead_letter` with the error message stored in `lastError`.
+
+### Idempotency
+
+`txHash` is the unique key for `PendingVerification` (MongoDB unique index). Calling `enqueueTransaction()` twice for the same hash is safe — the upsert uses `$setOnInsert` so the existing document is not overwritten, and BullMQ deduplicates by `jobId: txHash`.
+
+### PendingVerification document statuses
+
+| Status | Meaning |
+|---|---|
+| `pending` | Job persisted to MongoDB, not yet processed |
+| `processing` | Worker picked up the job; in-flight |
+| `resolved` | Job completed successfully |
+| `dead_letter` | Permanent failure; will not be retried |
+
+### Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `TX_QUEUE_CONCURRENCY` | `5` | Number of concurrent transaction processing workers |
+| `REDIS_HOST` | `localhost` | Redis host for BullMQ |
+| `REDIS_PORT` | `6379` | Redis port |
+| `REDIS_PASSWORD` | _(none)_ | Redis password (optional) |
+
